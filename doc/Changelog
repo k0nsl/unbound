@@ -1,3 +1,10 @@
+4 August 2016: Wouter
+	- Fix #807: workaround for possible some "unused" function parameters
+	  in test code, from Jinmei Tatuya.
+
+3 August 2016: Wouter
+	- use sendmsg instead of sendto for TFO.
+
 28 July 2016: Wouter
 	- Fix #806: wrong comment removed.
 
