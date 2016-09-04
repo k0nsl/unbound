@@ -418,10 +418,22 @@ int main(int argc, char* argv[])
 		cfgfile = CONFIGFILE;
 #endif
 
+#ifdef HAVE_ERR_LOAD_CRYPTO_STRINGS
 	ERR_load_crypto_strings();
+#endif
 	ERR_load_SSL_strings();
+#if OPENSSL_VERSION_NUMBER < 0x10100000
 	OpenSSL_add_all_algorithms();
+#else
+	OPENSSL_init_crypto(OPENSSL_INIT_ADD_ALL_CIPHERS
+		| OPENSSL_INIT_ADD_ALL_DIGESTS
+		| OPENSSL_INIT_LOAD_CRYPTO_STRINGS, NULL);
+#endif
+#if OPENSSL_VERSION_NUMBER < 0x10100000
 	(void)SSL_library_init();
+#else
+	(void)OPENSSL_init_ssl(0, NULL);
+#endif
 
 	if(!RAND_status()) {
                 /* try to seed it */

@@ -37,7 +37,8 @@
  * \file
  *
  * This file checks to see that the current 5011 keys work to prime the
- * current root anchor.  If not a certificate is used to update the anchor.
+ * current root anchor.  If not a certificate is used to update the anchor,
+ * with RFC7958 https xml fetch.
  *
  * This is a concept solution for distribution of the DNSSEC root
  * trust anchor.  It is a small tool, called "unbound-anchor", that
@@ -47,7 +48,7 @@
  * Management-Abstract:
  *    * first run: fill root.key file with hardcoded DS record.
  *    * mostly: use RFC5011 tracking, quick . DNSKEY UDP query.
- *    * failover: use builtin certificate, do https and update.
+ *    * failover: use RFC7958 builtin certificate, do https and update.
  * Special considerations:
  *    * 30-days RFC5011 timer saves a lot of https traffic.
  *    * DNSKEY probe must be NOERROR, saves a lot of https traffic.
@@ -77,7 +78,7 @@
  * the file contains a list of normal DNSKEY/DS records, and uses that to
  * bootstrap 5011 (the KSK is made VALID).
  *
- * The certificate update is done by fetching root-anchors.xml and
+ * The certificate RFC7958 update is done by fetching root-anchors.xml and
  * root-anchors.p7s via SSL.  The HTTPS certificate can be logged but is
  * not validated (https for channel security; the security comes from the
  * certificate).  The 'data.iana.org' domain name A and AAAA are resolved
@@ -2310,10 +2311,22 @@ int main(int argc, char* argv[])
 	if(argc != 0)
 		usage();
 
+#ifdef HAVE_ERR_LOAD_CRYPTO_STRINGS
 	ERR_load_crypto_strings();
+#endif
 	ERR_load_SSL_strings();
+#if OPENSSL_VERSION_NUMBER < 0x10100000
 	OpenSSL_add_all_algorithms();
+#else
+	OPENSSL_init_crypto(OPENSSL_INIT_ADD_ALL_CIPHERS
+		| OPENSSL_INIT_ADD_ALL_DIGESTS
+		| OPENSSL_INIT_LOAD_CRYPTO_STRINGS, NULL);
+#endif
+#if OPENSSL_VERSION_NUMBER < 0x10100000
 	(void)SSL_library_init();
+#else
+	(void)OPENSSL_init_ssl(0, NULL);
+#endif
 
 	if(dolist) do_list_builtin();
 
