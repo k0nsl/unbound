@@ -1,3 +1,22 @@
+13 September 2016: Wouter
+	- Silenced flex-generated sign-unsigned warning print with gcc
+	  diagnostic pragma.
+	- Fix for new splint on FreeBSD.  Fix cast for sockaddr_un.sun_len.
+
+9 September 2016: Wouter
+	- Fix #831: workaround for spurious fread_chk warning against petal.c
+
+5 September 2016: Ralph
+	- Take configured minimum TTL into consideration when reducing TTL
+	  to original TTL from RRSIG.
+
+5 September 2016: Wouter
+	- Fix #829: doc of sldns_wire2str_rdata_buf() return value has an
+	  off-by-one typo, from Jinmei Tatuya (Infoblox).
+	- Fix incomplete prototypes reported by Dag-Erling Smørgrav.
+	- Fix #828: missing type in access-control-tag-action redirect results
+	  in NXDOMAIN.
+
 2 September 2016: Wouter
 	- Fix compile with openssl 1.1.0 with api=1.1.0.
 
