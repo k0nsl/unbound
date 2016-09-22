@@ -185,7 +185,7 @@ static DH *get_dh2048(void)
 	if (!dh || !p || !g)
 		goto err;
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000
+#if OPENSSL_VERSION_NUMBER < 0x10100000 || defined(HAVE_LIBRESSL)
 	dh->p = p;
 	dh->g = g;
 #else
@@ -245,6 +245,7 @@ daemon_remote_create(struct config_file* cfg)
 		/* No certificates are requested */
 		if(!SSL_CTX_set_cipher_list(rc->ctx, "aNULL")) {
 			log_crypto_err("Failed to set aNULL cipher list");
+			daemon_remote_delete(rc);
 			return NULL;
 		}
 
@@ -253,6 +254,7 @@ daemon_remote_create(struct config_file* cfg)
 		 */
 		if(!SSL_CTX_set_tmp_dh(rc->ctx,get_dh2048())) {
 			log_crypto_err("Wanted to set DH param, but failed");
+			daemon_remote_delete(rc);
 			return NULL;
 		}
 		return rc;

@@ -184,8 +184,11 @@ lz_enter_zone_dname(struct local_zones* zones, uint8_t* nm, size_t len,
 		log_warn("duplicate local-zone");
 		lock_rw_unlock(&z->lock);
 		local_zone_delete(z);
+		/* find the correct zone, so not an error for duplicate */
+		z = local_zones_find(zones, nm, len, labs, c);
+		lock_rw_wrlock(&z->lock);
 		lock_rw_unlock(&zones->lock);
-		return NULL;
+		return z;
 	}
 	lock_rw_unlock(&zones->lock);
 	return z;
@@ -617,7 +620,7 @@ lz_enter_override(struct local_zones* zones, char* zname, char* netblock,
 			lock_rw_unlock(&z->lock);
 			log_err("duplicate local-zone-override %s %s",
 				zname, netblock);
-			return 0;
+			return 1;
 		}
 	}
 
