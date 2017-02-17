@@ -241,7 +241,10 @@ static const char*
 get_builtin_ds(void)
 {
 	return
-". IN DS 19036 8 2 49AAC11D7B6F6446702E54A1607371607A1A41855200FD2CE1CDDE32F24E8FB5\n";
+/* anchor 19036 is from 2010 */
+/* anchor 20326 is from 2017 */
+". IN DS 19036 8 2 49AAC11D7B6F6446702E54A1607371607A1A41855200FD2CE1CDDE32F24E8FB5\n"
+". IN DS 20326 8 2 E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D\n";
 }
 
 /** print hex data */
@@ -420,8 +423,14 @@ read_builtin_cert(void)
 {
 	const char* builtin_cert = get_builtin_cert();
 	STACK_OF(X509)* sk;
-	BIO *bio = BIO_new_mem_buf(builtin_cert,
-		(int)strlen(builtin_cert));
+	BIO *bio;
+	char* d = strdup(builtin_cert); /* to avoid const warnings in the
+		changed prototype of BIO_new_mem_buf */
+	if(!d) {
+		if(verb) printf("out of memory\n");
+		exit(0);
+	}
+	bio = BIO_new_mem_buf(d, (int)strlen(d));
 	if(!bio) {
 		if(verb) printf("out of memory\n");
 		exit(0);
@@ -432,6 +441,7 @@ read_builtin_cert(void)
 		exit(0);
 	}
 	BIO_free(bio);
+	free(d);
 	return sk;
 }
 

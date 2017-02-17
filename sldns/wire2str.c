@@ -47,6 +47,8 @@ static sldns_lookup_table sldns_algorithms_data[] = {
 	{ LDNS_ECC_GOST, "ECC-GOST"},
 	{ LDNS_ECDSAP256SHA256, "ECDSAP256SHA256"},
 	{ LDNS_ECDSAP384SHA384, "ECDSAP384SHA384"},
+	{ LDNS_ED25519, "ED25519"},
+	{ LDNS_ED448, "ED448"},
 	{ LDNS_INDIRECT, "INDIRECT" },
 	{ LDNS_PRIVATEDNS, "PRIVATEDNS" },
 	{ LDNS_PRIVATEOID, "PRIVATEOID" },
@@ -165,6 +167,7 @@ static sldns_lookup_table sldns_edns_options_data[] = {
 	{ 6, "DHU" },
 	{ 7, "N3U" },
 	{ 8, "edns-client-subnet" },
+	{ 11, "edns-tcp-keepalive"},
 	{ 12, "Padding" },
 	{ 0, NULL}
 };
@@ -667,7 +670,7 @@ int sldns_wire2str_rdata_scan(uint8_t** d, size_t* dlen, char** s,
 	uint8_t* origd = *d;
 	char* origs = *s;
 	size_t origdlen = *dlen, origslen = *slen;
-	uint16_t r_cnt, r_max;
+	size_t r_cnt, r_max;
 	sldns_rdf_type rdftype;
 	int w = 0, n;
 
@@ -788,8 +791,9 @@ int sldns_wire2str_dname_scan(uint8_t** d, size_t* dlen, char** s, size_t* slen,
 		}
 
 		/* spool label characters, end with '.' */
-		if(in_buf && *dlen < labellen) labellen = *dlen;
-		else if(!in_buf && pos+labellen > pkt+pktlen)
+		if(in_buf && *dlen < (size_t)labellen)
+			labellen = (uint8_t)*dlen;
+		else if(!in_buf && pos+(size_t)labellen > pkt+pktlen)
 			labellen = (uint8_t)(pkt + pktlen - pos);
 		for(i=0; i<(unsigned)labellen; i++) {
 			w += dname_char_print(s, slen, *pos++);
@@ -1837,6 +1841,25 @@ int sldns_wire2str_edns_subnet_print(char** s, size_t* sl, uint8_t* data,
 	return w;
 }
 
+int sldns_wire2str_edns_keepalive_print(char** s, size_t* sl, uint8_t* data,
+	size_t len)
+{
+	int w = 0;
+	uint16_t timeout;
+	if(!(len == 0 || len == 2)) {
+		w += sldns_str_print(s, sl, "malformed keepalive ");
+		w += print_hex_buf(s, sl, data, len);
+		return w;
+	}
+	if(len == 0 ) {
+		w += sldns_str_print(s, sl, "no timeout value (only valid for client option) ");
+	} else {
+		timeout = sldns_read_uint16(data);
+		w += sldns_str_print(s, sl, "timeout value in units of 100ms %u", (int)timeout);
+	}
+	return w;
+}
+
 int sldns_wire2str_edns_option_print(char** s, size_t* sl,
 	uint16_t option_code, uint8_t* optdata, size_t optlen)
 {
@@ -1864,6 +1887,9 @@ int sldns_wire2str_edns_option_print(char** s, size_t* sl,
 		break;
 	case LDNS_EDNS_CLIENT_SUBNET:
 		w += sldns_wire2str_edns_subnet_print(s, sl, optdata, optlen);
+		break;
+	 case LDNS_EDNS_KEEPALIVE:
+		w += sldns_wire2str_edns_keepalive_print(s, sl, optdata, optlen);
 		break;
 	case LDNS_EDNS_PADDING:
 		w += print_hex_buf(s, sl, optdata, optlen);
@@ -1960,10 +1986,10 @@ int sldns_wire2str_edns_scan(uint8_t** data, size_t* data_len, char** str,
 	w += sldns_str_print(str, str_len, " ; udp: %u", (unsigned)udpsize);
 
 	if(rdatalen) {
-		if(*data_len < rdatalen) {
+		if((size_t)*data_len < rdatalen) {
 			w += sldns_str_print(str, str_len,
 				" ; Error EDNS rdata too short; ");
-			rdatalen = *data_len;
+			rdatalen = (uint16_t)*data_len;
 		}
 		w += print_edns_opts(str, str_len, *data, rdatalen);
 		(*data) += rdatalen;

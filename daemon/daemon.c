@@ -88,6 +88,10 @@
 #include "sldns/keyraw.h"
 #include <signal.h>
 
+#ifdef HAVE_SYSTEMD
+#include <systemd/sd-daemon.h>
+#endif
+
 /** How many quit requests happened. */
 static int sig_record_quit = 0;
 /** How many reload requests happened. */
@@ -175,8 +179,15 @@ static void
 signal_handling_playback(struct worker* wrk)
 {
 #ifdef SIGHUP
-	if(sig_record_reload)
+	if(sig_record_reload) {
+# ifdef HAVE_SYSTEMD
+		sd_notify(0, "RELOADING=1");
+# endif
 		worker_sighandler(SIGHUP, wrk);
+# ifdef HAVE_SYSTEMD
+		sd_notify(0, "READY=1");
+# endif
+	}
 #endif
 	if(sig_record_quit)
 		worker_sighandler(SIGTERM, wrk);
@@ -249,9 +260,16 @@ daemon_init(void)
 		free(daemon);
 		return NULL;
 	}
+	/* init edns_known_options */
+	if(!edns_known_options_init(daemon->env)) {
+		free(daemon->env);
+		free(daemon);
+		return NULL;
+	}
 	alloc_init(&daemon->superalloc, NULL, 0);
 	daemon->acl = acl_list_create();
 	if(!daemon->acl) {
+		edns_known_options_delete(daemon->env);
 		free(daemon->env);
 		free(daemon);
 		return NULL;
@@ -348,6 +366,7 @@ static void daemon_setup_modules(struct daemon* daemon)
 		daemon->env)) {
 		fatal_exit("failed to setup modules");
 	}
+	log_edns_known_options(VERB_ALGO, daemon->env);
 }
 
 /**
@@ -587,8 +606,14 @@ daemon_fork(struct daemon* daemon)
 	signal_handling_playback(daemon->workers[0]);
 
 	/* Start resolver service on main thread. */
+#ifdef HAVE_SYSTEMD
+	sd_notify(0, "READY=1");
+#endif
 	log_info("start of service (%s).", PACKAGE_STRING);
 	worker_work(daemon->workers[0]);
+#ifdef HAVE_SYSTEMD
+	sd_notify(0, "STOPPING=1");
+#endif
 	log_info("service stopped (%s).", PACKAGE_STRING);
 
 	/* we exited! a signal happened! Stop other threads */
@@ -644,6 +669,8 @@ daemon_delete(struct daemon* daemon)
 		slabhash_delete(daemon->env->msg_cache);
 		rrset_cache_delete(daemon->env->rrset_cache);
 		infra_delete(daemon->env->infra_cache);
+		edns_known_options_delete(daemon->env);
+		inplace_cb_lists_delete(daemon->env);
 	}
 	ub_randfree(daemon->rand);
 	alloc_clear(&daemon->superalloc);

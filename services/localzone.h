@@ -44,6 +44,7 @@
 #include "util/rbtree.h"
 #include "util/locks.h"
 #include "util/storage/dnstree.h"
+#include "util/module.h"
 #include "services/view.h"
 struct ub_packed_rrset_key;
 struct regional;
@@ -60,8 +61,10 @@ struct config_strlist;
  * local-data directly.
  */
 enum localzone_type {
+	/** unset type, used for unset tag_action elements */
+	local_zone_unset = 0,
 	/** drop query */
-	local_zone_deny = 0,
+	local_zone_deny,
 	/** answer with error */
 	local_zone_refuse,
 	/** answer nxdomain or nodata */
@@ -92,9 +95,9 @@ enum localzone_type {
  */
 struct local_zones {
 	/** lock on the localzone tree */
-	lock_rw_t lock;
+	lock_rw_type lock;
 	/** rbtree of struct local_zone */
-	rbtree_t ztree;
+	rbtree_type ztree;
 };
 
 /**
@@ -102,7 +105,7 @@ struct local_zones {
  */
 struct local_zone {
 	/** rbtree node, key is name and class */
-	rbnode_t node;
+	rbnode_type node;
 	/** parent zone, if any. */
 	struct local_zone* parent;
 
@@ -120,7 +123,7 @@ struct local_zone {
 	 * For the node, parent, name, namelen, namelabs, dclass, you
 	 * need to also hold the zones_tree lock to change them (or to
 	 * delete this zone) */
-	lock_rw_t lock;
+	lock_rw_type lock;
 
 	/** how to process zone */
 	enum localzone_type type;
@@ -130,14 +133,14 @@ struct local_zone {
 	size_t taglen;
 	/** netblock addr_tree with struct local_zone_override information
 	 * or NULL if there are no override elements */
-	struct rbtree_t* override_tree;
+	struct rbtree_type* override_tree;
 
 	/** in this region the zone's data is allocated.
 	 * the struct local_zone itself is malloced. */
 	struct regional* region;
 	/** local data for this zone
 	 * rbtree of struct local_data */
-	rbtree_t data;
+	rbtree_type data;
 	/** if data contains zone apex SOA data, this is a ptr to it. */
 	struct ub_packed_rrset_key* soa;
 };
@@ -147,7 +150,7 @@ struct local_zone {
  */
 struct local_data {
 	/** rbtree node, key is name only */
-	rbnode_t node;
+	rbnode_type node;
 	/** domain name */
 	uint8_t* name;
 	/** length of name */
@@ -265,6 +268,7 @@ void local_zones_print(struct local_zones* zones);
  * Answer authoritatively for local zones.
  * Takes care of locking.
  * @param zones: the stored zones (shared, read only).
+ * @param env: the module environment.
  * @param qinfo: query info (parsed).
  * @param edns: edns info (parsed).
  * @param buf: buffer with query ID and flags, also for reply.
@@ -282,11 +286,19 @@ void local_zones_print(struct local_zones* zones);
  * @return true if answer is in buffer. false if query is not answered 
  * by authority data. If the reply should be dropped altogether, the return 
  * value is true, but the buffer is cleared (empty).
+ * It can also return true if a non-exact alias answer is found.  In this
+ * case qinfo->local_alias points to the corresponding alias RRset but the
+ * answer is NOT encoded in buffer.  It's the caller's responsibility to
+ * complete the alias chain (if needed) and encode the final set of answer.
+ * Data pointed to by qinfo->local_alias is allocated in 'temp' or refers to
+ * configuration data.  So the caller will need to make a deep copy of it
+ * if it needs to keep it beyond the lifetime of 'temp' or a dynamic update
+ * to local zone data.
  */
-int local_zones_answer(struct local_zones* zones, struct query_info* qinfo,
-	struct edns_data* edns, struct sldns_buffer* buf, struct regional* temp,
-	struct comm_reply* repinfo, uint8_t* taglist, size_t taglen,
-	uint8_t* tagactions, size_t tagactionssize,
+int local_zones_answer(struct local_zones* zones, struct module_env* env,
+	struct query_info* qinfo, struct edns_data* edns, struct sldns_buffer* buf,
+	struct regional* temp, struct comm_reply* repinfo, uint8_t* taglist,
+	size_t taglen, uint8_t* tagactions, size_t tagactionssize,
 	struct config_strlist** tag_datas, size_t tag_datas_size,
 	char** tagname, int num_tags, struct view* view);
 

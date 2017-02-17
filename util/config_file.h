@@ -229,6 +229,10 @@ struct config_file {
 	int log_time_ascii;
 	/** log queries with one line per query */
 	int log_queries;
+	/** log replies with one line per reply */
+	int log_replies;
+	/** log identity to report */
+	char* log_identity;
 
 	/** do not report identity (id.server, hostname.bind) */
 	int hide_identity;
@@ -275,6 +279,8 @@ struct config_file {
 	int val_permissive_mode;
 	/** ignore the CD flag in incoming queries and refuse them bogus data */
 	int ignore_cd;
+	/** serve expired entries and prefetch them */
+	int serve_expired;
 	/** nsec3 maximum iterations per key size, string */
 	char* val_nsec3_key_iterations;
 	/** autotrust add holddown time, in seconds */
@@ -340,6 +346,9 @@ struct config_file {
 	/** Python script file */
 	char* python_script;
 
+	/** Use systemd socket activation. */
+	int use_systemd;
+
 	/** daemonize, i.e. fork into the background. */
 	int do_daemonize;
 
@@ -387,7 +396,16 @@ struct config_file {
 	/** true to disable DNSSEC lameness check in iterator */
 	int disable_dnssec_lame_check;
 
-	/** ratelimit 0 is off, otherwise qps (unless overridden) */
+	/** ratelimit for ip addresses. 0 is off, otherwise qps (unless overridden) */
+	int ip_ratelimit;
+	/** number of slabs for ip_ratelimit cache */
+	size_t ip_ratelimit_slabs;
+	/** memory size in bytes for ip_ratelimit cache */
+	size_t ip_ratelimit_size;
+	/** ip_ratelimit factor, 0 blocks all, 10 allows 1/10 of traffic */
+	int ip_ratelimit_factor;
+
+	/** ratelimit for domains. 0 is off, otherwise qps (unless overridden) */
 	int ratelimit;
 	/** number of slabs for ratelimit cache */
 	size_t ratelimit_slabs;
@@ -401,6 +419,9 @@ struct config_file {
 	int ratelimit_factor;
 	/** minimise outgoing QNAME and hide original QTYPE if possible */
 	int qname_minimisation;
+	/** minimise QNAME in strict mode, minimise according to RFC.
+	 *  Do not apply fallback */
+	int qname_minimisation_strict;
 };
 
 /** from cfg username, after daemonise setup performed */
@@ -426,6 +447,8 @@ struct config_stub {
 	int isprime;
 	/** if forward-first is set (failover to without if fails) */
 	int isfirst;
+	/* use SSL for queries to this stub */
+	int ssl_upstream;
 };
 
 /**
@@ -939,5 +962,8 @@ char* w_lookup_reg_str(const char* key, const char* name);
 /** Modify directory in options for module file name */
 void w_config_adjust_directory(struct config_file* cfg);
 #endif /* UB_ON_WINDOWS */
+
+/** debug option for unit tests. */
+extern int fake_dsa;
 
 #endif /* UTIL_CONFIG_FILE_H */

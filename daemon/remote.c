@@ -146,6 +146,7 @@ timeval_divide(struct timeval* avg, const struct timeval* sum, size_t d)
  * the command : "openssl dhparam -C 2048"
  * (some openssl versions reject DH that is 'too small', eg. 512).
  */
+#if OPENSSL_VERSION_NUMBER < 0x10100000 || defined(HAVE_LIBRESSL)
 #ifndef S_SPLINT_S
 static DH *get_dh2048(void)
 {
@@ -203,6 +204,7 @@ err:
 	return NULL;
 }
 #endif /* SPLINT */
+#endif /* OPENSSL_VERSION_NUMBER < 0x10100000 */
 
 struct daemon_remote*
 daemon_remote_create(struct config_file* cfg)
@@ -243,12 +245,18 @@ daemon_remote_create(struct config_file* cfg)
 
 	if (cfg->remote_control_use_cert == 0) {
 		/* No certificates are requested */
-		if(!SSL_CTX_set_cipher_list(rc->ctx, "aNULL")) {
+#ifdef HAVE_SSL_CTX_SET_SECURITY_LEVEL
+		SSL_CTX_set_security_level(rc->ctx, 0);
+#endif
+		if(!SSL_CTX_set_cipher_list(rc->ctx, "aNULL, eNULL")) {
 			log_crypto_err("Failed to set aNULL cipher list");
 			daemon_remote_delete(rc);
 			return NULL;
 		}
 
+		/* in openssl 1.1, the securitylevel 0 allows eNULL, that
+		 * does not need the DH */
+#if OPENSSL_VERSION_NUMBER < 0x10100000 || defined(HAVE_LIBRESSL)
 		/* Since we have no certificates and hence no source of
 		 * DH params, let's generate and set them
 		 */
@@ -257,6 +265,7 @@ daemon_remote_create(struct config_file* cfg)
 			daemon_remote_delete(rc);
 			return NULL;
 		}
+#endif
 		return rc;
 	}
 	rc->use_cert = 1;
@@ -372,7 +381,7 @@ add_open(const char* ip, int nr, struct listen_port** list, int noproto_is_err,
 
 	if(ip[0] == '/') {
 		/* This looks like a local socket */
-		fd = create_local_accept_sock(ip, &noproto);
+		fd = create_local_accept_sock(ip, &noproto, cfg->use_systemd);
 		/*
 		 * Change socket ownership and permissions so users other
 		 * than root can access it provided they are in the same
@@ -415,7 +424,7 @@ add_open(const char* ip, int nr, struct listen_port** list, int noproto_is_err,
 
 		/* open fd */
 		fd = create_tcp_accept_sock(res, 1, &noproto, 0,
-			cfg->ip_transparent, 0, cfg->ip_freebind);
+			cfg->ip_transparent, 0, cfg->ip_freebind, cfg->use_systemd);
 		freeaddrinfo(res);
 	}
 
@@ -753,6 +762,8 @@ print_stats(SSL* ssl, const char* nm, struct stats_info* s)
 	struct timeval avg;
 	if(!ssl_printf(ssl, "%s.num.queries"SQ"%lu\n", nm, 
 		(unsigned long)s->svr.num_queries)) return 0;
+	if(!ssl_printf(ssl, "%s.num.queries_ip_ratelimited"SQ"%lu\n", nm,
+		(unsigned long)s->svr.num_queries_ip_ratelimited)) return 0;
 	if(!ssl_printf(ssl, "%s.num.cachehits"SQ"%lu\n", nm, 
 		(unsigned long)(s->svr.num_queries 
 			- s->svr.num_queries_missed_cache))) return 0;
@@ -760,6 +771,8 @@ print_stats(SSL* ssl, const char* nm, struct stats_info* s)
 		(unsigned long)s->svr.num_queries_missed_cache)) return 0;
 	if(!ssl_printf(ssl, "%s.num.prefetch"SQ"%lu\n", nm, 
 		(unsigned long)s->svr.num_queries_prefetch)) return 0;
+	if(!ssl_printf(ssl, "%s.num.zero_ttl"SQ"%lu\n", nm,
+		(unsigned long)s->svr.zero_ttl_responses)) return 0;
 	if(!ssl_printf(ssl, "%s.num.recursivereplies"SQ"%lu\n", nm, 
 		(unsigned long)s->mesh_replies_sent)) return 0;
 	if(!ssl_printf(ssl, "%s.requestlist.avg"SQ"%g\n", nm,
@@ -818,12 +831,6 @@ print_mem(SSL* ssl, struct worker* worker, struct daemon* daemon)
 {
 	int m;
 	size_t msg, rrset, val, iter;
-#ifdef HAVE_SBRK
-	extern void* unbound_start_brk;
-	void* cur = sbrk(0);
-	if(!print_longnum(ssl, "mem.total.sbrk"SQ, 
-		(size_t)((char*)cur - (char*)unbound_start_brk))) return 0;
-#endif /* HAVE_SBRK */
 	msg = slabhash_get_mem(daemon->env->msg_cache);
 	rrset = slabhash_get_mem(&daemon->env->rrset_cache->table);
 	val=0;
@@ -1123,8 +1130,8 @@ find_arg2(SSL* ssl, char* arg, char** arg2)
 }
 
 /** Add a new zone */
-static void
-do_zone_add(SSL* ssl, struct local_zones* zones, char* arg)
+static int
+perform_zone_add(SSL* ssl, struct local_zones* zones, char* arg)
 {
 	uint8_t* nm;
 	int nmlabs;
@@ -1133,13 +1140,13 @@ do_zone_add(SSL* ssl, struct local_zones* zones, char* arg)
 	enum localzone_type t;
 	struct local_zone* z;
 	if(!find_arg2(ssl, arg, &arg2))
-		return;
+		return 0;
 	if(!parse_arg_name(ssl, arg, &nm, &nmlen, &nmlabs))
-		return;
+		return 0;
 	if(!local_zone_str2type(arg2, &t)) {
 		ssl_printf(ssl, "error not a zone type. %s\n", arg2);
 		free(nm);
-		return;
+		return 0;
 	}
 	lock_rw_wrlock(&zones->lock);
 	if((z=local_zones_find(zones, nm, nmlen, 
@@ -1150,29 +1157,56 @@ do_zone_add(SSL* ssl, struct local_zones* zones, char* arg)
 		lock_rw_unlock(&z->lock);
 		free(nm);
 		lock_rw_unlock(&zones->lock);
-		send_ok(ssl);
-		return;
+		return 1;
 	}
 	if(!local_zones_add_zone(zones, nm, nmlen, 
 		nmlabs, LDNS_RR_CLASS_IN, t)) {
 		lock_rw_unlock(&zones->lock);
 		ssl_printf(ssl, "error out of memory\n");
-		return;
+		return 0;
 	}
 	lock_rw_unlock(&zones->lock);
+	return 1;
+}
+
+/** Do the local_zone command */
+static void
+do_zone_add(SSL* ssl, struct local_zones* zones, char* arg)
+{
+	if(!perform_zone_add(ssl, zones, arg))
+		return;
 	send_ok(ssl);
 }
 
-/** Remove a zone */
+/** Do the local_zones command */
 static void
-do_zone_remove(SSL* ssl, struct local_zones* zones, char* arg)
+do_zones_add(SSL* ssl, struct local_zones* zones)
+{
+	char buf[2048];
+	int num = 0;
+	while(ssl_read_line(ssl, buf, sizeof(buf))) {
+		if(buf[0] == 0x04 && buf[1] == 0)
+			break; /* end of transmission */
+		if(!perform_zone_add(ssl, zones, buf)) {
+			if(!ssl_printf(ssl, "error for input line: %s\n", buf))
+				return;
+		}
+		else
+			num++;
+	}
+	(void)ssl_printf(ssl, "added %d zones\n", num);
+}
+
+/** Remove a zone */
+static int
+perform_zone_remove(SSL* ssl, struct local_zones* zones, char* arg)
 {
 	uint8_t* nm;
 	int nmlabs;
 	size_t nmlen;
 	struct local_zone* z;
 	if(!parse_arg_name(ssl, arg, &nm, &nmlen, &nmlabs))
-		return;
+		return 0;
 	lock_rw_wrlock(&zones->lock);
 	if((z=local_zones_find(zones, nm, nmlen, 
 		nmlabs, LDNS_RR_CLASS_IN))) {
@@ -1181,33 +1215,117 @@ do_zone_remove(SSL* ssl, struct local_zones* zones, char* arg)
 	}
 	lock_rw_unlock(&zones->lock);
 	free(nm);
+	return 1;
+}
+
+/** Do the local_zone_remove command */
+static void
+do_zone_remove(SSL* ssl, struct local_zones* zones, char* arg)
+{
+	if(!perform_zone_remove(ssl, zones, arg))
+		return;
 	send_ok(ssl);
+}
+
+/** Do the local_zones_remove command */
+static void
+do_zones_remove(SSL* ssl, struct local_zones* zones)
+{
+	char buf[2048];
+	int num = 0;
+	while(ssl_read_line(ssl, buf, sizeof(buf))) {
+		if(buf[0] == 0x04 && buf[1] == 0)
+			break; /* end of transmission */
+		if(!perform_zone_remove(ssl, zones, buf)) {
+			if(!ssl_printf(ssl, "error for input line: %s\n", buf))
+				return;
+		}
+		else
+			num++;
+	}
+	(void)ssl_printf(ssl, "removed %d zones\n", num);
 }
 
 /** Add new RR data */
-static void
-do_data_add(SSL* ssl, struct local_zones* zones, char* arg)
+static int
+perform_data_add(SSL* ssl, struct local_zones* zones, char* arg)
 {
 	if(!local_zones_add_RR(zones, arg)) {
 		ssl_printf(ssl,"error in syntax or out of memory, %s\n", arg);
-		return;
+		return 0;
 	}
+	return 1;
+}
+
+/** Do the local_data command */
+static void
+do_data_add(SSL* ssl, struct local_zones* zones, char* arg)
+{
+	if(!perform_data_add(ssl, zones, arg))
+		return;
 	send_ok(ssl);
 }
 
-/** Remove RR data */
+/** Do the local_datas command */
 static void
-do_data_remove(SSL* ssl, struct local_zones* zones, char* arg)
+do_datas_add(SSL* ssl, struct local_zones* zones)
+{
+	char buf[2048];
+	int num = 0;
+	while(ssl_read_line(ssl, buf, sizeof(buf))) {
+		if(buf[0] == 0x04 && buf[1] == 0)
+			break; /* end of transmission */
+		if(!perform_data_add(ssl, zones, buf)) {
+			if(!ssl_printf(ssl, "error for input line: %s\n", buf))
+				return;
+		}
+		else
+			num++;
+	}
+	(void)ssl_printf(ssl, "added %d datas\n", num);
+}
+
+/** Remove RR data */
+static int
+perform_data_remove(SSL* ssl, struct local_zones* zones, char* arg)
 {
 	uint8_t* nm;
 	int nmlabs;
 	size_t nmlen;
 	if(!parse_arg_name(ssl, arg, &nm, &nmlen, &nmlabs))
-		return;
+		return 0;
 	local_zones_del_data(zones, nm,
 		nmlen, nmlabs, LDNS_RR_CLASS_IN);
 	free(nm);
+	return 1;
+}
+
+/** Do the local_data_remove command */
+static void
+do_data_remove(SSL* ssl, struct local_zones* zones, char* arg)
+{
+	if(!perform_data_remove(ssl, zones, arg))
+		return;
 	send_ok(ssl);
+}
+
+/** Do the local_datas_remove command */
+static void
+do_datas_remove(SSL* ssl, struct local_zones* zones)
+{
+	char buf[2048];
+	int num = 0;
+	while(ssl_read_line(ssl, buf, sizeof(buf))) {
+		if(buf[0] == 0x04 && buf[1] == 0)
+			break; /* end of transmission */
+		if(!perform_data_remove(ssl, zones, buf)) {
+			if(!ssl_printf(ssl, "error for input line: %s\n", buf))
+				return;
+		}
+		else
+			num++;
+	}
+	(void)ssl_printf(ssl, "removed %d datas\n", num);
 }
 
 /** Add a new zone to view */
@@ -1300,7 +1418,7 @@ static void
 do_cache_remove(struct worker* worker, uint8_t* nm, size_t nmlen,
 	uint16_t t, uint16_t c)
 {
-	hashvalue_t h;
+	hashvalue_type h;
 	struct query_info k;
 	rrset_cache_remove(worker->env.rrset_cache, nm, nmlen, t, c, 0);
 	if(t == LDNS_RR_TYPE_SOA)
@@ -1310,6 +1428,7 @@ do_cache_remove(struct worker* worker, uint8_t* nm, size_t nmlen,
 	k.qname_len = nmlen;
 	k.qtype = t;
 	k.qclass = c;
+	k.local_alias = NULL;
 	h = query_info_hash(&k, 0);
 	slabhash_remove(worker->env.msg_cache, h, &k);
 	if(t == LDNS_RR_TYPE_AAAA) {
@@ -2255,6 +2374,14 @@ do_set_option(SSL* ssl, struct worker* worker, char* arg)
 		(void)ssl_printf(ssl, "error setting option\n");
 		return;
 	}
+	/* effectuate some arguments */
+	if(strcmp(arg, "val-override-date:") == 0) {
+		int m = modstack_find(&worker->env.mesh->mods, "validator");
+		struct val_env* val_env = NULL;
+		if(m != -1) val_env = (struct val_env*)worker->env.modinfo[m];
+		if(val_env)
+			val_env->date_override = worker->env.cfg->val_date_override;
+	}
 	send_ok(ssl);
 }
 
@@ -2434,6 +2561,8 @@ struct ratelimit_list_arg {
 	time_t now;
 };
 
+#define ip_ratelimit_list_arg ratelimit_list_arg
+
 /** list items in the ratelimit table */
 static void
 rate_list(struct lruhash_entry* e, void* arg)
@@ -2452,6 +2581,24 @@ rate_list(struct lruhash_entry* e, void* arg)
 	ssl_printf(a->ssl, "%s %d limit %d\n", buf, max, lim);
 }
 
+/** list items in the ip_ratelimit table */
+static void
+ip_rate_list(struct lruhash_entry* e, void* arg)
+{
+	char ip[128];
+	struct ip_ratelimit_list_arg* a = (struct ip_ratelimit_list_arg*)arg;
+	struct ip_rate_key* k = (struct ip_rate_key*)e->key;
+	struct ip_rate_data* d = (struct ip_rate_data*)e->data;
+	int lim = infra_ip_ratelimit;
+	int max = infra_rate_max(d, a->now);
+	if(a->all == 0) {
+		if(max < lim)
+			return;
+	}
+	addr_to_str(&k->addr, k->addrlen, ip, sizeof(ip));
+	ssl_printf(a->ssl, "%s %d limit %d\n", ip, max, lim);
+}
+
 /** do the ratelimit_list command */
 static void
 do_ratelimit_list(SSL* ssl, struct worker* worker, char* arg)
@@ -2468,6 +2615,24 @@ do_ratelimit_list(SSL* ssl, struct worker* worker, char* arg)
 		(a.all == 0 && infra_dp_ratelimit == 0))
 		return;
 	slabhash_traverse(a.infra->domain_rates, 0, rate_list, &a);
+}
+
+/** do the ip_ratelimit_list command */
+static void
+do_ip_ratelimit_list(SSL* ssl, struct worker* worker, char* arg)
+{
+	struct ip_ratelimit_list_arg a;
+	a.all = 0;
+	a.infra = worker->env.infra_cache;
+	a.now = *worker->env.now;
+	a.ssl = ssl;
+	arg = skipwhite(arg);
+	if(strcmp(arg, "+a") == 0)
+		a.all = 1;
+	if(a.infra->client_ip_rates==NULL ||
+		(a.all == 0 && infra_ip_ratelimit == 0))
+		return;
+	slabhash_traverse(a.infra->client_ip_rates, 0, ip_rate_list, &a);
 }
 
 /** tell other processes to execute the command */
@@ -2548,6 +2713,9 @@ execute_cmd(struct daemon_remote* rc, SSL* ssl, char* cmd,
 	} else if(cmdcmp(p, "ratelimit_list", 14)) {
 		do_ratelimit_list(ssl, worker, p+14);
 		return;
+	} else if(cmdcmp(p, "ip_ratelimit_list", 17)) {
+		do_ip_ratelimit_list(ssl, worker, p+17);
+		return;
 	} else if(cmdcmp(p, "stub_add", 8)) {
 		/* must always distribute this cmd */
 		if(rc) distribute_cmd(rc, ssl, cmd);
@@ -2610,12 +2778,20 @@ execute_cmd(struct daemon_remote* rc, SSL* ssl, char* cmd,
 		do_verbosity(ssl, skipwhite(p+9));
 	} else if(cmdcmp(p, "local_zone_remove", 17)) {
 		do_zone_remove(ssl, worker->daemon->local_zones, skipwhite(p+17));
+	} else if(cmdcmp(p, "local_zones_remove", 18)) {
+		do_zones_remove(ssl, worker->daemon->local_zones);
 	} else if(cmdcmp(p, "local_zone", 10)) {
 		do_zone_add(ssl, worker->daemon->local_zones, skipwhite(p+10));
+	} else if(cmdcmp(p, "local_zones", 11)) {
+		do_zones_add(ssl, worker->daemon->local_zones);
 	} else if(cmdcmp(p, "local_data_remove", 17)) {
 		do_data_remove(ssl, worker->daemon->local_zones, skipwhite(p+17));
+	} else if(cmdcmp(p, "local_datas_remove", 18)) {
+		do_datas_remove(ssl, worker->daemon->local_zones);
 	} else if(cmdcmp(p, "local_data", 10)) {
 		do_data_add(ssl, worker->daemon->local_zones, skipwhite(p+10));
+	} else if(cmdcmp(p, "local_datas", 11)) {
+		do_datas_add(ssl, worker->daemon->local_zones);
 	} else if(cmdcmp(p, "view_local_zone_remove", 22)) {
 		do_view_zone_remove(ssl, worker, skipwhite(p+22));
 	} else if(cmdcmp(p, "view_local_zone", 15)) {

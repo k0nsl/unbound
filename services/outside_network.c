@@ -334,7 +334,7 @@ use_free_buffer(struct outside_network* outnet)
 		if(outnet->tcp_wait_last == w)
 			outnet->tcp_wait_last = NULL;
 		if(!outnet_tcp_take_into_use(w, w->pkt, w->pkt_len)) {
-			comm_point_callback_t* cb = w->cb;
+			comm_point_callback_type* cb = w->cb;
 			void* cb_arg = w->cb_arg;
 			waiting_tcp_delete(w);
 			fptr_ok(fptr_whitelist_pending_tcp(cb));
@@ -775,7 +775,7 @@ outside_network_create(struct comm_base *base, size_t bufsize,
 
 /** helper pending delete */
 static void
-pending_node_del(rbnode_t* node, void* arg)
+pending_node_del(rbnode_type* node, void* arg)
 {
 	struct pending* pend = (struct pending*)node;
 	struct outside_network* outnet = (struct outside_network*)arg;
@@ -784,7 +784,7 @@ pending_node_del(rbnode_t* node, void* arg)
 
 /** helper serviced delete */
 static void
-serviced_node_del(rbnode_t* node, void* ATTR_UNUSED(arg))
+serviced_node_del(rbnode_type* node, void* ATTR_UNUSED(arg))
 {
 	struct serviced_query* sq = (struct serviced_query*)node;
 	struct service_callback* p = sq->cblist, *np;
@@ -966,13 +966,13 @@ udp_sockport(struct sockaddr_storage* addr, socklen_t addrlen, int pfxlen,
 		}
 		fd = create_udp_sock(AF_INET6, SOCK_DGRAM, 
 			(struct sockaddr*)&sa, addrlen, 1, inuse, &noproto,
-			0, 0, 0, NULL, 0, freebind);
+			0, 0, 0, NULL, 0, freebind, 0);
 	} else {
 		struct sockaddr_in* sa = (struct sockaddr_in*)addr;
 		sa->sin_port = (in_port_t)htons((uint16_t)port);
 		fd = create_udp_sock(AF_INET, SOCK_DGRAM, 
 			(struct sockaddr*)addr, addrlen, 1, inuse, &noproto,
-			0, 0, 0, NULL, 0, 0);
+			0, 0, 0, NULL, 0, 0, 0);
 	}
 	return fd;
 }
@@ -1124,7 +1124,7 @@ randomize_and_send_udp(struct pending* pend, sldns_buffer* packet, int timeout)
 
 struct pending* 
 pending_udp_query(struct serviced_query* sq, struct sldns_buffer* packet,
-	int timeout, comm_point_callback_t* cb, void* cb_arg)
+	int timeout, comm_point_callback_type* cb, void* cb_arg)
 {
 	struct pending* pend = (struct pending*)calloc(1, sizeof(*pend));
 	if(!pend) return NULL;
@@ -1174,7 +1174,7 @@ outnet_tcptimer(void* arg)
 {
 	struct waiting_tcp* w = (struct waiting_tcp*)arg;
 	struct outside_network* outnet = w->outnet;
-	comm_point_callback_t* cb;
+	comm_point_callback_type* cb;
 	void* cb_arg;
 	if(w->pkt) {
 		/* it is on the waiting list */
@@ -1197,7 +1197,7 @@ outnet_tcptimer(void* arg)
 
 struct waiting_tcp*
 pending_tcp_query(struct serviced_query* sq, sldns_buffer* packet,
-	int timeout, comm_point_callback_t* callback, void* callback_arg)
+	int timeout, comm_point_callback_type* callback, void* callback_arg)
 {
 	struct pending_tcp* pend = sq->outnet->tcp_free;
 	struct waiting_tcp* w;
@@ -1301,7 +1301,7 @@ serviced_create(struct outside_network* outnet, sldns_buffer* buff, int dnssec,
 {
 	struct serviced_query* sq = (struct serviced_query*)malloc(sizeof(*sq));
 #ifdef UNBOUND_DEBUG
-	rbnode_t* ins;
+	rbnode_type* ins;
 #endif
 	if(!sq) 
 		return NULL;
@@ -1587,7 +1587,7 @@ serviced_callbacks(struct serviced_query* sq, int error, struct comm_point* c,
 	uint8_t *backup_p = NULL;
 	size_t backlen = 0;
 #ifdef UNBOUND_DEBUG
-	rbnode_t* rem =
+	rbnode_type* rem =
 #else
 	(void)
 #endif
@@ -1986,17 +1986,22 @@ serviced_udp_callback(struct comm_point* c, void* arg, int error,
 
 struct serviced_query* 
 outnet_serviced_query(struct outside_network* outnet,
-	uint8_t* qname, size_t qnamelen, uint16_t qtype, uint16_t qclass,
-	uint16_t flags, int dnssec, int want_dnssec, int nocaps,
-	int tcp_upstream, int ssl_upstream, struct edns_option* opt_list,
+	struct query_info* qinfo, uint16_t flags, int dnssec, int want_dnssec,
+	int nocaps, int tcp_upstream, int ssl_upstream,
 	struct sockaddr_storage* addr, socklen_t addrlen, uint8_t* zone,
-	size_t zonelen, comm_point_callback_t* callback, void* callback_arg,
-	sldns_buffer* buff)
+	size_t zonelen, struct module_qstate* qstate,
+	comm_point_callback_type* callback, void* callback_arg, sldns_buffer* buff,
+	struct module_env* env)
 {
 	struct serviced_query* sq;
 	struct service_callback* cb;
-	serviced_gen_query(buff, qname, qnamelen, qtype, qclass, flags);
-	sq = lookup_serviced(outnet, buff, dnssec, addr, addrlen, opt_list);
+	if(!inplace_cb_query_call(env, qinfo, flags, addr, addrlen, zone, zonelen,
+		qstate, qstate->region))
+			return NULL;
+	serviced_gen_query(buff, qinfo->qname, qinfo->qname_len, qinfo->qtype,
+		qinfo->qclass, flags);
+	sq = lookup_serviced(outnet, buff, dnssec, addr, addrlen,
+		qstate->edns_opts_back_out);
 	/* duplicate entries are included in the callback list, because
 	 * there is a counterpart registration by our caller that needs to
 	 * be doubly-removed (with callbacks perhaps). */
@@ -2006,7 +2011,7 @@ outnet_serviced_query(struct outside_network* outnet,
 		/* make new serviced query entry */
 		sq = serviced_create(outnet, buff, dnssec, want_dnssec, nocaps,
 			tcp_upstream, ssl_upstream, addr, addrlen, zone,
-			zonelen, (int)qtype, opt_list);
+			zonelen, (int)qinfo->qtype, qstate->edns_opts_back_out);
 		if(!sq) {
 			free(cb);
 			return NULL;

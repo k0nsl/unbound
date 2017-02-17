@@ -108,7 +108,7 @@ read_fetch_policy(struct iter_env* ie, const char* str)
 
 /** apply config caps whitelist items to name tree */
 static int
-caps_white_apply_cfg(rbtree_t* ntree, struct config_file* cfg)
+caps_white_apply_cfg(rbtree_type* ntree, struct config_file* cfg)
 {
 	struct config_strlist* p;
 	for(p=cfg->caps_whitelist; p; p=p->next) {
@@ -532,6 +532,7 @@ causes_cycle(struct module_qstate* qstate, uint8_t* name, size_t namelen,
 	qinf.qname_len = namelen;
 	qinf.qtype = t;
 	qinf.qclass = c;
+	qinf.local_alias = NULL;
 	fptr_ok(fptr_whitelist_modenv_detect_cycle(
 		qstate->env->detect_cycle));
 	return (*qstate->env->detect_cycle)(qstate, &qinf, 

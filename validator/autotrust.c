@@ -1064,7 +1064,7 @@ int autr_read_file(struct val_anchors* anchors, const char* nm)
 
 /** string for a trustanchor state */
 static const char*
-trustanchor_state2str(autr_state_t s)
+trustanchor_state2str(autr_state_type s)
 {
         switch (s) {
                 case AUTR_STATE_START:       return "  START  ";
@@ -1679,7 +1679,7 @@ reset_holddown(struct module_env* env, struct autr_ta* ta, int* changed)
 /** Set the state for this trust anchor */
 static void
 set_trustanchor_state(struct module_env* env, struct autr_ta* ta, int* changed,
-	autr_state_t s)
+	autr_state_type s)
 {
 	verbose_key(ta, VERB_ALGO, "update: %s to %s",
 		trustanchor_state2str(ta->s), trustanchor_state2str(s));
@@ -1989,7 +1989,7 @@ calc_next_probe(struct module_env* env, time_t wait)
 static time_t
 wait_probe_time(struct val_anchors* anchors)
 {
-	rbnode_t* t = rbtree_first(&anchors->autr->probe);
+	rbnode_type* t = rbtree_first(&anchors->autr->probe);
 	if(t != RBTREE_NULL) 
 		return ((struct trust_anchor*)t->key)->autr->next_probe_time;
 	return 0;
@@ -2328,6 +2328,7 @@ probe_anchor(struct module_env* env, struct trust_anchor* tp)
 	qinfo.qname_len = tp->namelen;
 	qinfo.qtype = LDNS_RR_TYPE_DNSKEY;
 	qinfo.qclass = tp->dclass;
+	qinfo.local_alias = NULL;
 	log_query_info(VERB_ALGO, "autotrust probe", &qinfo);
 	verbose(VERB_ALGO, "retry probe set in %d seconds", 
 		(int)tp->autr->next_probe_time - (int)*env->now);
@@ -2362,7 +2363,7 @@ static struct trust_anchor*
 todo_probe(struct module_env* env, time_t* next)
 {
 	struct trust_anchor* tp;
-	rbnode_t* el;
+	rbnode_type* el;
 	/* get first one */
 	lock_basic_lock(&env->anchors->lock);
 	if( (el=rbtree_first(&env->anchors->autr->probe)) == RBTREE_NULL) {
