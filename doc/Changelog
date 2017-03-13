@@ -1,3 +1,63 @@
+13 March 2017: Wouter
+	- testbound understands Deckard MATCH rcode question answer commands.
+	- Fix #1235: Fix too long DNAME expansion produces SERVFAIL instead
+	  of YXDOMAIN + query loop, reported by Petr Spacek.
+
+10 March 2017: Wouter
+	- Fix #1234: shortening DNAME loop produces duplicate DNAME records
+	  in ANSWER section.
+
+9 March 2017: Wouter
+	- --disable-sha1 disables SHA1 support in RRSIG, so from DNSKEY and
+	  DS records.  NSEC3 is not disabled.
+	- fake-sha1 test option; print warning if used.  To make unit tests.
+	- unbound-control list local zone and data commands listed in the
+	  help output.
+
+8 March 2017: Wouter
+	- make depend for build dependencies.
+	- swig version 2.0.1 required.
+	- fix enum conversion warnings
+
+7 March 2017: Wouter
+	- Fix #1230: swig version 2.0.0 is required for pythonmod, with
+	  1.3.40 it crashes when running repeatly unbound-control reload.
+	- Response actions based on IP address from Jinmei Tatuya (Infoblox).
+
+6 March 2017: Wouter
+	- Fix #1229: Systemd service sandboxing in contrib/unbound.service.
+	- iana portlist update
+
+28 February 2017: Ralph
+	- Fix testpkts.c, check if DO bit is set, not only if there is an OPT
+	  record.
+
+28 February 2017: Wouter
+	- For #1227: if we have sha256, set the cipher list to have no
+	  known vulns.
+
+27 February 2017: Wouter
+	- Fix #1227: Fix that Unbound control allows weak ciphersuits.
+	- Fix #1226: provide official 32bit binary for windows.
+
+24 February 2017: Wouter
+	- include sys/time.h for new shm code on NetBSD.
+
+23 February 2017: Wouter
+	- Fix doc/CNAME-basedRedirectionDesignNotes.pdf zone static to
+	  redirect.
+	- Patch from Luiz Fernando Softov for Stats Shared Memory.
+	- unbound-control stats_shm command prints stats using shared memory,
+	  which uses less cpu.
+	- make depend, autoconf, doxygen and lint fixed up.
+
+22 February 2017: Wouter
+	- Fix #1224: Fix that defaults should not fall back to "Program Files
+	  (x86) if Unbound is 64bit by default on windows.
+
+21 February 2017: Wouter
+	- iana portlist update
+
 16 February 2017: Wouter
 	- sldns updated for vfixed and buffer resize indication from getdns.
 
@@ -5,7 +65,7 @@
 	- sldns has ED25519 and ED448 algorithm number and name for display.
 
 14 February 2017: Wouter
-	- tag 1.6.1rc3.
+	- tag 1.6.1rc3. -- which became 1.6.1 on 21feb, trunk has 1.6.2
 
 13 February 2017: Wouter
 	- Fix autoconf of systemd check for lack of pkg-config.

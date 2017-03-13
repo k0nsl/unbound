@@ -51,6 +51,8 @@
 int ub_c_lex(void);
 void ub_c_error(const char *message);
 
+static void validate_respip_action(const char* action);
+
 /* these need to be global, otherwise they cannot be used inside yacc */
 extern struct config_parser_state* cfg_parser;
 
@@ -122,6 +124,7 @@ extern struct config_parser_state* cfg_parser;
 %token VAR_DNSTAP_LOG_CLIENT_RESPONSE_MESSAGES
 %token VAR_DNSTAP_LOG_FORWARDER_QUERY_MESSAGES
 %token VAR_DNSTAP_LOG_FORWARDER_RESPONSE_MESSAGES
+%token VAR_RESPONSE_IP_TAG VAR_RESPONSE_IP VAR_RESPONSE_IP_DATA
 %token VAR_HARDEN_ALGO_DOWNGRADE VAR_IP_TRANSPARENT
 %token VAR_DISABLE_DNSSEC_LAME_CHECK
 %token VAR_IP_RATELIMIT VAR_IP_RATELIMIT_SLABS VAR_IP_RATELIMIT_SIZE
@@ -133,9 +136,9 @@ extern struct config_parser_state* cfg_parser;
 %token VAR_DEFINE_TAG VAR_LOCAL_ZONE_TAG VAR_ACCESS_CONTROL_TAG
 %token VAR_LOCAL_ZONE_OVERRIDE VAR_ACCESS_CONTROL_TAG_ACTION
 %token VAR_ACCESS_CONTROL_TAG_DATA VAR_VIEW VAR_ACCESS_CONTROL_VIEW
-%token VAR_VIEW_FIRST VAR_SERVE_EXPIRED VAR_FAKE_DSA
+%token VAR_VIEW_FIRST VAR_SERVE_EXPIRED VAR_FAKE_DSA VAR_FAKE_SHA1
 %token VAR_LOG_IDENTITY
-%token VAR_USE_SYSTEMD
+%token VAR_USE_SYSTEMD VAR_SHM_ENABLE VAR_SHM_KEY
 
 %%
 toplevelvars: /* empty */ | toplevelvars toplevelvar ;
@@ -213,7 +216,9 @@ content_server: server_num_threads | server_verbosity | server_port |
 	server_local_zone_override | server_access_control_tag_action |
 	server_access_control_tag_data | server_access_control_view |
 	server_qname_minimisation_strict | server_serve_expired |
-	server_fake_dsa | server_log_identity | server_use_systemd
+	server_fake_dsa | server_log_identity | server_use_systemd |
+	server_response_ip_tag | server_response_ip | server_response_ip_data |
+	server_shm_enable | server_shm_key | server_fake_sha1
 	;
 stubstart: VAR_STUB_ZONE
 	{
@@ -265,7 +270,8 @@ viewstart: VAR_VIEW
 	;
 contents_view: contents_view content_view 
 	| ;
-content_view: view_name | view_local_zone | view_local_data | view_first
+content_view: view_name | view_local_zone | view_local_data | view_first |
+		view_response_ip | view_response_ip_data
 	;
 server_num_threads: VAR_NUM_THREADS STRING_ARG 
 	{ 
@@ -311,6 +317,26 @@ server_extended_statistics: VAR_EXTENDED_STATISTICS STRING_ARG
 		if(strcmp($2, "yes") != 0 && strcmp($2, "no") != 0)
 			yyerror("expected yes or no.");
 		else cfg_parser->cfg->stat_extended = (strcmp($2, "yes")==0);
+		free($2);
+	}
+	;
+server_shm_enable: VAR_SHM_ENABLE STRING_ARG
+	{
+		OUTYY(("P(server_shm_enable:%s)\n", $2));
+		if(strcmp($2, "yes") != 0 && strcmp($2, "no") != 0)
+			yyerror("expected yes or no.");
+		else cfg_parser->cfg->shm_enable = (strcmp($2, "yes")==0);
+		free($2);
+	}
+	;
+server_shm_key: VAR_SHM_KEY STRING_ARG 
+	{ 
+		OUTYY(("P(server_shm_key:%s)\n", $2)); 
+		if(strcmp($2, "") == 0 || strcmp($2, "0") == 0)
+			cfg_parser->cfg->shm_key = 0;
+		else if(atoi($2) == 0)
+			yyerror("number expected");
+		else cfg_parser->cfg->shm_key = atoi($2);
 		free($2);
 	}
 	;
@@ -1236,6 +1262,19 @@ server_fake_dsa: VAR_FAKE_DSA STRING_ARG
 		free($2);
 	}
 	;
+server_fake_sha1: VAR_FAKE_SHA1 STRING_ARG
+	{
+		OUTYY(("P(server_fake_sha1:%s)\n", $2));
+		if(strcmp($2, "yes") != 0 && strcmp($2, "no") != 0)
+			yyerror("expected yes or no.");
+#ifdef HAVE_SSL
+		else fake_sha1 = (strcmp($2, "yes")==0);
+		if(fake_sha1)
+			log_warn("test option fake_sha1 is enabled");
+#endif
+		free($2);
+	}
+	;
 server_val_log_level: VAR_VAL_LOG_LEVEL STRING_ARG
 	{
 		OUTYY(("P(server_val_log_level:%s)\n", $2));
@@ -1509,6 +1548,25 @@ server_access_control_view: VAR_ACCESS_CONTROL_VIEW STRING_ARG STRING_ARG
 		}
 	}
 	;
+server_response_ip_tag: VAR_RESPONSE_IP_TAG STRING_ARG STRING_ARG
+	{
+		size_t len = 0;
+		uint8_t* bitlist = config_parse_taglist(cfg_parser->cfg, $3,
+			&len);
+		free($3);
+		OUTYY(("P(response_ip_tag:%s)\n", $2));
+		if(!bitlist)
+			yyerror("could not parse tags, (define-tag them first)");
+		if(bitlist) {
+			if(!cfg_strbytelist_insert(
+				&cfg_parser->cfg->respip_tags,
+				$2, bitlist, len)) {
+				yyerror("out of memory");
+				free($2);
+			}
+		}
+	}
+	;
 server_ip_ratelimit: VAR_IP_RATELIMIT STRING_ARG 
 	{ 
 		OUTYY(("P(server_ip_ratelimit:%s)\n", $2)); 
@@ -1769,6 +1827,24 @@ view_local_zone: VAR_LOCAL_ZONE STRING_ARG STRING_ARG
 		}
 	}
 	;
+view_response_ip: VAR_RESPONSE_IP STRING_ARG STRING_ARG
+	{
+		OUTYY(("P(view_response_ip:%s %s)\n", $2, $3));
+		validate_respip_action($3);
+		if(!cfg_str2list_insert(
+			&cfg_parser->cfg->views->respip_actions, $2, $3))
+			fatal_exit("out of memory adding per-view "
+				"response-ip action");
+	}
+	;
+view_response_ip_data: VAR_RESPONSE_IP_DATA STRING_ARG STRING_ARG
+	{
+		OUTYY(("P(view_response_ip_data:%s)\n", $2));
+		if(!cfg_str2list_insert(
+			&cfg_parser->cfg->views->respip_data, $2, $3))
+			fatal_exit("out of memory adding response-ip-data");
+	}
+	;
 view_local_data: VAR_LOCAL_DATA STRING_ARG
 	{
 		OUTYY(("P(view_local_data:%s)\n", $2));
@@ -2010,6 +2086,39 @@ server_log_identity: VAR_LOG_IDENTITY STRING_ARG
 		cfg_parser->cfg->log_identity = $2;
 	}
 	;
+server_response_ip: VAR_RESPONSE_IP STRING_ARG STRING_ARG
+	{
+		OUTYY(("P(server_response_ip:%s %s)\n", $2, $3));
+		validate_respip_action($3);
+		if(!cfg_str2list_insert(&cfg_parser->cfg->respip_actions,
+			$2, $3))
+			fatal_exit("out of memory adding response-ip");
+	}
+	;
+server_response_ip_data: VAR_RESPONSE_IP_DATA STRING_ARG STRING_ARG
+	{
+		OUTYY(("P(server_response_ip_data:%s)\n", $2));
+			if(!cfg_str2list_insert(&cfg_parser->cfg->respip_data,
+				$2, $3))
+				fatal_exit("out of memory adding response-ip-data");
+	}
+	;
 %%
 
 /* parse helper routines could be here */
+static void
+validate_respip_action(const char* action)
+{
+	if(strcmp(action, "deny")!=0 &&
+		strcmp(action, "redirect")!=0 &&
+		strcmp(action, "inform")!=0 &&
+		strcmp(action, "inform_deny")!=0 &&
+		strcmp(action, "always_transparent")!=0 &&
+		strcmp(action, "always_refuse")!=0 &&
+		strcmp(action, "always_nxdomain")!=0)
+	{
+		yyerror("response-ip action: expected deny, redirect, "
+			"inform, inform_deny, always_transparent, "
+			"always_refuse or always_nxdomain");
+	}
+}

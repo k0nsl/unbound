@@ -242,6 +242,29 @@ daemon_remote_create(struct config_file* cfg)
 		daemon_remote_delete(rc);
 		return NULL;
 	}
+#if defined(SSL_OP_NO_TLSv1) && defined(SSL_OP_NO_TLSv1_1)
+	/* if we have tls 1.1 disable 1.0 */
+	if((SSL_CTX_set_options(rc->ctx, SSL_OP_NO_TLSv1) & SSL_OP_NO_TLSv1)
+		!= SSL_OP_NO_TLSv1){
+		log_crypto_err("could not set SSL_OP_NO_TLSv1");
+		daemon_remote_delete(rc);
+		return NULL;
+	}
+#endif
+#if defined(SSL_OP_NO_TLSv1_1) && defined(SSL_OP_NO_TLSv1_2)
+	/* if we have tls 1.2 disable 1.1 */
+	if((SSL_CTX_set_options(rc->ctx, SSL_OP_NO_TLSv1_1) & SSL_OP_NO_TLSv1_1)
+		!= SSL_OP_NO_TLSv1_1){
+		log_crypto_err("could not set SSL_OP_NO_TLSv1_1");
+		daemon_remote_delete(rc);
+		return NULL;
+	}
+#endif
+#ifdef SHA256_DIGEST_LENGTH
+	/* if we have sha256, set the cipher list to have no known vulns */
+	if(!SSL_CTX_set_cipher_list(rc->ctx, "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"))
+		log_crypto_err("coult not set cipher list with SSL_CTX_set_cipher_list");
+#endif
 
 	if (cfg->remote_control_use_cert == 0) {
 		/* No certificates are requested */
@@ -830,11 +853,12 @@ static int
 print_mem(SSL* ssl, struct worker* worker, struct daemon* daemon)
 {
 	int m;
-	size_t msg, rrset, val, iter;
+	size_t msg, rrset, val, iter, respip;
 	msg = slabhash_get_mem(daemon->env->msg_cache);
 	rrset = slabhash_get_mem(&daemon->env->rrset_cache->table);
 	val=0;
 	iter=0;
+	respip=0;
 	m = modstack_find(&worker->env.mesh->mods, "validator");
 	if(m != -1) {
 		fptr_ok(fptr_whitelist_mod_get_mem(worker->env.mesh->
@@ -849,6 +873,13 @@ print_mem(SSL* ssl, struct worker* worker, struct daemon* daemon)
 		iter = (*worker->env.mesh->mods.mod[m]->get_mem)
 			(&worker->env, m);
 	}
+	m = modstack_find(&worker->env.mesh->mods, "respip");
+	if(m != -1) {
+		fptr_ok(fptr_whitelist_mod_get_mem(worker->env.mesh->
+			mods.mod[m]->get_mem));
+		respip = (*worker->env.mesh->mods.mod[m]->get_mem)
+			(&worker->env, m);
+	}
 
 	if(!print_longnum(ssl, "mem.cache.rrset"SQ, rrset))
 		return 0;
@@ -857,6 +888,8 @@ print_mem(SSL* ssl, struct worker* worker, struct daemon* daemon)
 	if(!print_longnum(ssl, "mem.mod.iterator"SQ, iter))
 		return 0;
 	if(!print_longnum(ssl, "mem.mod.validator"SQ, val))
+		return 0;
+	if(!print_longnum(ssl, "mem.mod.respip"SQ, respip))
 		return 0;
 	return 1;
 }
