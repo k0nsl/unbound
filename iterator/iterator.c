@@ -1351,7 +1351,7 @@ processInitRequest3(struct module_qstate* qstate, struct iter_qstate* iq,
 
 	/* If the RD flag wasn't set, then we just finish with the 
 	 * cached referral as the response. */
-	if(!(qstate->query_flags & BIT_RD)) {
+	if(!(qstate->query_flags & BIT_RD) && iq->deleg_msg) {
 		iq->response = iq->deleg_msg;
 		if(verbosity >= VERB_ALGO && iq->response)
 			log_dns_msg("no RD requested, using delegation msg", 
@@ -2262,6 +2262,17 @@ processQueryResponse(struct module_qstate* qstate, struct iter_qstate* iq,
 		FLAGS_GET_RCODE(iq->response->rep->flags) == LDNS_RCODE_YXDOMAIN) {
 		/* YXDOMAIN is a permanent error, no need to retry */
 		type = RESPONSE_TYPE_ANSWER;
+	}
+	if(type == RESPONSE_TYPE_CNAME && iq->response->rep->an_numrrsets >= 1
+		&& ntohs(iq->response->rep->rrsets[0]->rk.type) == LDNS_RR_TYPE_DNAME) {
+		uint8_t* sname = NULL;
+		size_t snamelen = 0;
+		get_cname_target(iq->response->rep->rrsets[0], &sname,
+			&snamelen);
+		if(snamelen && dname_subdomain_c(sname, iq->response->rep->rrsets[0]->rk.dname)) {
+			/* DNAME to a subdomain loop; do not recurse */
+			type = RESPONSE_TYPE_ANSWER;
+		}
 	}
 
 	/* handle each of the type cases */
@@ -3189,6 +3200,10 @@ process_response(struct module_qstate* qstate, struct iter_qstate* iq,
 		if(!qstate->edns_opts_back_in) {
 			log_err("out of memory on incoming message");
 			/* like packet got dropped */
+			goto handle_it;
+		}
+		if(!inplace_cb_edns_back_parsed_call(qstate->env, qstate)) {
+			log_err("unable to call edns_back_parsed callback");
 			goto handle_it;
 		}
 	}

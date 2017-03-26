@@ -131,21 +131,26 @@ extern struct config_parser_state* cfg_parser;
 %token VAR_RATELIMIT VAR_RATELIMIT_SLABS VAR_RATELIMIT_SIZE
 %token VAR_RATELIMIT_FOR_DOMAIN VAR_RATELIMIT_BELOW_DOMAIN
 %token VAR_IP_RATELIMIT_FACTOR VAR_RATELIMIT_FACTOR
+%token VAR_SEND_CLIENT_SUBNET VAR_CLIENT_SUBNET_OPCODE
+%token VAR_MAX_CLIENT_SUBNET_IPV4 VAR_MAX_CLIENT_SUBNET_IPV6
 %token VAR_CAPS_WHITELIST VAR_CACHE_MAX_NEGATIVE_TTL VAR_PERMIT_SMALL_HOLDDOWN
 %token VAR_QNAME_MINIMISATION VAR_QNAME_MINIMISATION_STRICT VAR_IP_FREEBIND
 %token VAR_DEFINE_TAG VAR_LOCAL_ZONE_TAG VAR_ACCESS_CONTROL_TAG
 %token VAR_LOCAL_ZONE_OVERRIDE VAR_ACCESS_CONTROL_TAG_ACTION
 %token VAR_ACCESS_CONTROL_TAG_DATA VAR_VIEW VAR_ACCESS_CONTROL_VIEW
 %token VAR_VIEW_FIRST VAR_SERVE_EXPIRED VAR_FAKE_DSA VAR_FAKE_SHA1
-%token VAR_LOG_IDENTITY
+%token VAR_LOG_IDENTITY VAR_HIDE_TRUSTANCHOR
 %token VAR_USE_SYSTEMD VAR_SHM_ENABLE VAR_SHM_KEY
+%token VAR_DNSCRYPT VAR_DNSCRYPT_ENABLE VAR_DNSCRYPT_PORT VAR_DNSCRYPT_PROVIDER
+%token VAR_DNSCRYPT_SECRET_KEY VAR_DNSCRYPT_PROVIDER_CERT
 
 %%
 toplevelvars: /* empty */ | toplevelvars toplevelvar ;
 toplevelvar: serverstart contents_server | stubstart contents_stub |
 	forwardstart contents_forward | pythonstart contents_py | 
 	rcstart contents_rc | dtstart contents_dt | viewstart 
-	contents_view
+	contents_view |
+	dnscstart contents_dnsc
 	;
 
 /* server: declaration */
@@ -209,6 +214,8 @@ content_server: server_num_threads | server_verbosity | server_port |
 	server_ratelimit_for_domain |
 	server_ratelimit_below_domain | server_ratelimit_factor |
 	server_ip_ratelimit_factor |
+	server_send_client_subnet | server_client_subnet_opcode |
+	server_max_client_subnet_ipv4 | server_max_client_subnet_ipv6 |
 	server_caps_whitelist | server_cache_max_negative_ttl |
 	server_permit_small_holddown | server_qname_minimisation |
 	server_ip_freebind | server_define_tag | server_local_zone_tag |
@@ -218,7 +225,8 @@ content_server: server_num_threads | server_verbosity | server_port |
 	server_qname_minimisation_strict | server_serve_expired |
 	server_fake_dsa | server_log_identity | server_use_systemd |
 	server_response_ip_tag | server_response_ip | server_response_ip_data |
-	server_shm_enable | server_shm_key | server_fake_sha1
+	server_shm_enable | server_shm_key | server_fake_sha1 |
+	server_hide_trustanchor
 	;
 stubstart: VAR_STUB_ZONE
 	{
@@ -271,7 +279,7 @@ viewstart: VAR_VIEW
 contents_view: contents_view content_view 
 	| ;
 content_view: view_name | view_local_zone | view_local_data | view_first |
-		view_response_ip | view_response_ip_data
+		view_response_ip | view_response_ip_data | view_local_data_ptr
 	;
 server_num_threads: VAR_NUM_THREADS STRING_ARG 
 	{ 
@@ -346,6 +354,66 @@ server_port: VAR_PORT STRING_ARG
 		if(atoi($2) == 0)
 			yyerror("port number expected");
 		else cfg_parser->cfg->port = atoi($2);
+		free($2);
+	}
+	;
+server_send_client_subnet: VAR_SEND_CLIENT_SUBNET STRING_ARG
+	{
+	#ifdef CLIENT_SUBNET
+		OUTYY(("P(server_send_client_subnet:%s)\n", $2));
+		if(!cfg_strlist_insert(&cfg_parser->cfg->client_subnet, $2))
+			fatal_exit("out of memory adding client-subnet");
+	#else
+		OUTYY(("P(Compiled without edns subnet option, ignoring)\n"));
+	#endif
+	}
+	;
+server_client_subnet_opcode: VAR_CLIENT_SUBNET_OPCODE STRING_ARG
+	{
+	#ifdef CLIENT_SUBNET
+		OUTYY(("P(client_subnet_opcode:%s)\n", $2));
+		if(atoi($2) == 0 && strcmp($2, "0") != 0)
+			yyerror("option code expected");
+		else if(atoi($2) > 65535 || atoi($2) < 0)
+			yyerror("option code must be in interval [0, 65535]");
+		else cfg_parser->cfg->client_subnet_opcode = atoi($2);
+	#else
+		OUTYY(("P(Compiled without edns subnet option, ignoring)\n"));
+	#endif
+		free($2);
+	}
+	;
+server_max_client_subnet_ipv4: VAR_MAX_CLIENT_SUBNET_IPV4 STRING_ARG
+	{
+	#ifdef CLIENT_SUBNET
+		OUTYY(("P(max_client_subnet_ipv4:%s)\n", $2));
+		if(atoi($2) == 0 && strcmp($2, "0") != 0)
+			yyerror("IPv4 subnet length expected");
+		else if (atoi($2) > 32)
+			cfg_parser->cfg->max_client_subnet_ipv4 = 32;
+		else if (atoi($2) < 0)
+			cfg_parser->cfg->max_client_subnet_ipv4 = 0;
+		else cfg_parser->cfg->max_client_subnet_ipv4 = atoi($2);
+	#else
+		OUTYY(("P(Compiled without edns subnet option, ignoring)\n"));
+	#endif
+		free($2);
+	}
+	;
+server_max_client_subnet_ipv6: VAR_MAX_CLIENT_SUBNET_IPV6 STRING_ARG
+	{
+	#ifdef CLIENT_SUBNET
+		OUTYY(("P(max_client_subnet_ipv6:%s)\n", $2));
+		if(atoi($2) == 0 && strcmp($2, "0") != 0)
+			yyerror("Ipv6 subnet length expected");
+		else if (atoi($2) > 128)
+			cfg_parser->cfg->max_client_subnet_ipv6 = 128;
+		else if (atoi($2) < 0)
+			cfg_parser->cfg->max_client_subnet_ipv6 = 0;
+		else cfg_parser->cfg->max_client_subnet_ipv6 = atoi($2);
+	#else
+		OUTYY(("P(Compiled without edns subnet option, ignoring)\n"));
+	#endif
 		free($2);
 	}
 	;
@@ -723,6 +791,15 @@ server_hide_version: VAR_HIDE_VERSION STRING_ARG
 		if(strcmp($2, "yes") != 0 && strcmp($2, "no") != 0)
 			yyerror("expected yes or no.");
 		else cfg_parser->cfg->hide_version = (strcmp($2, "yes")==0);
+		free($2);
+	}
+	;
+server_hide_trustanchor: VAR_HIDE_TRUSTANCHOR STRING_ARG
+	{
+		OUTYY(("P(server_hide_trustanchor:%s)\n", $2));
+		if(strcmp($2, "yes") != 0 && strcmp($2, "no") != 0)
+			yyerror("expected yes or no.");
+		else cfg_parser->cfg->hide_trustanchor = (strcmp($2, "yes")==0);
 		free($2);
 	}
 	;
@@ -1854,6 +1931,21 @@ view_local_data: VAR_LOCAL_DATA STRING_ARG
 		}
 	}
 	;
+view_local_data_ptr: VAR_LOCAL_DATA_PTR STRING_ARG
+	{
+		char* ptr;
+		OUTYY(("P(view_local_data_ptr:%s)\n", $2));
+		ptr = cfg_ptr_reverse($2);
+		free($2);
+		if(ptr) {
+			if(!cfg_strlist_insert(&cfg_parser->cfg->views->
+				local_data, ptr))
+				fatal_exit("out of memory adding local-data");
+		} else {
+			yyerror("local-data-ptr could not be reversed");
+		}
+	}
+	;
 view_first: VAR_VIEW_FIRST STRING_ARG
 	{
 		OUTYY(("P(view-first:%s)\n", $2));
@@ -2101,6 +2193,58 @@ server_response_ip_data: VAR_RESPONSE_IP_DATA STRING_ARG STRING_ARG
 			if(!cfg_str2list_insert(&cfg_parser->cfg->respip_data,
 				$2, $3))
 				fatal_exit("out of memory adding response-ip-data");
+	}
+	;
+dnscstart: VAR_DNSCRYPT
+	{
+		OUTYY(("\nP(dnscrypt:)\n"));
+		OUTYY(("\nP(dnscrypt:)\n"));
+	}
+	;
+contents_dnsc: contents_dnsc content_dnsc
+	| ;
+content_dnsc:
+	dnsc_dnscrypt_enable | dnsc_dnscrypt_port | dnsc_dnscrypt_provider |
+	dnsc_dnscrypt_secret_key | dnsc_dnscrypt_provider_cert
+	;
+dnsc_dnscrypt_enable: VAR_DNSCRYPT_ENABLE STRING_ARG
+	{
+		OUTYY(("P(dnsc_dnscrypt_enable:%s)\n", $2));
+		if(strcmp($2, "yes") != 0 && strcmp($2, "no") != 0)
+			yyerror("expected yes or no.");
+		else cfg_parser->cfg->dnscrypt = (strcmp($2, "yes")==0);
+	}
+	;
+
+dnsc_dnscrypt_port: VAR_DNSCRYPT_PORT STRING_ARG
+	{
+		OUTYY(("P(dnsc_dnscrypt_port:%s)\n", $2));
+
+		if(atoi($2) == 0)
+			yyerror("port number expected");
+		else cfg_parser->cfg->dnscrypt_port = atoi($2);
+		free($2);
+	}
+	;
+dnsc_dnscrypt_provider: VAR_DNSCRYPT_PROVIDER STRING_ARG
+	{
+		OUTYY(("P(dnsc_dnscrypt_provider:%s)\n", $2));
+		free(cfg_parser->cfg->dnscrypt_provider);
+		cfg_parser->cfg->dnscrypt_provider = $2;
+	}
+	;
+dnsc_dnscrypt_provider_cert: VAR_DNSCRYPT_PROVIDER_CERT STRING_ARG
+	{
+		OUTYY(("P(dnsc_dnscrypt_provider_cert:%s)\n", $2));
+		if(!cfg_strlist_insert(&cfg_parser->cfg->dnscrypt_provider_cert, $2))
+			fatal_exit("out of memory adding dnscrypt-provider-cert");
+	}
+	;
+dnsc_dnscrypt_secret_key: VAR_DNSCRYPT_SECRET_KEY STRING_ARG
+	{
+		OUTYY(("P(dnsc_dnscrypt_secret_key:%s)\n", $2));
+		if(!cfg_strlist_insert(&cfg_parser->cfg->dnscrypt_secret_key, $2))
+			fatal_exit("out of memory adding dnscrypt-secret-key");
 	}
 	;
 %%

@@ -1,3 +1,45 @@
+24 March 2017: George
+	- Fix to prevent non-referal query from being cached as referal when the
+	  no_cache_store flag was set.
+
+23 March 2017: Wouter
+	- Fix #1239: configure fails to find python distutils if python
+	  prints warning.
+
+22 March 2017: Wouter
+	- Fix #1238: segmentation fault when adding through the remote
+	  interface a per-view local zone to a view with no previous
+	  (configured) local zones.
+	- Fix #1229: Systemd service sandboxing, options in wrong sections.
+
+21 March 2017: Ralph
+	- Merge EDNS Client subnet implementation from feature branch into main
+	  branch, using new EDNS processing framework. 
+
+21 March 2017: Wouter
+	- Fix doxygen for dnscrypt files.
+
+20 March 2017: Wouter
+	- #1217. DNSCrypt support, with --enable-dnscrypt, libsodium and then
+	  enabled in the config file from Manu Bretelle.
+	- make depend, autoconf, remove warnings about statement before var.
+	- lru_demote and lruhash_insert_or_retrieve functions for getdns.
+	- fixup for lruhash (whitespace and header file comment).
+	- dnscrypt tests.
+
+17 March 2017: Wouter
+	- Patch for view functionality for local-data-ptr from Björn Ketelaars.
+	- Fix #1237 - Wrong resolving in chain, for norec queries that get
+	  SERVFAIL returned.
+
+16 March 2017: Wouter
+	- Fix that SHM is not inited if not enabled.
+	- Add trustanchor.unbound CH TXT that gets a response with a number
+	  of TXT RRs with a string like "example.com. 2345 1234" with
+	  the trust anchors and their keytags.
+	- Fix that looped DNAMEs do not cause unbound to spend effort.
+	- trustanchor tags are sorted.  reusable routine to fetch taglist.
+
 13 March 2017: Wouter
 	- testbound understands Deckard MATCH rcode question answer commands.
 	- Fix #1235: Fix too long DNAME expansion produces SERVFAIL instead
