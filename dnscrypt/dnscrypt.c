@@ -2,7 +2,11 @@
 #include "config.h"
 #include <stdlib.h>
 #include <fcntl.h>
-#include <event2/util.h>
+#ifdef HAVE_TIME_H
+#include <time.h>
+#endif
+#include <sys/time.h>
+#include <sys/types.h>
 #include "sldns/sbuffer.h"
 #include "util/config_file.h"
 #include "util/net_help.h"
@@ -464,7 +468,6 @@ dnsc_handle_curved_request(struct dnsc_env* dnscenv,
                                    repinfo->client_nonce,
                                    repinfo->nmkey,
                                    c->buffer) != 0){
-            // TODO: Bump counter!
             verbose(VERB_ALGO, "dnscrypt: Failed to uncurve");
             comm_point_drop_reply(repinfo);
             return 0;

@@ -117,6 +117,9 @@ worker_mem_report(struct worker* ATTR_UNUSED(worker),
 	size_t total, front, back, mesh, msg, rrset, infra, ac, superac;
 	size_t me, iter, val, anch;
 	int i;
+#ifdef CLIENT_SUBNET
+	size_t subnet = 0;
+#endif /* CLIENT_SUBNET */
 	if(verbosity < VERB_ALGO) 
 		return;
 	front = listen_get_mem(worker->front);
@@ -136,6 +139,12 @@ worker_mem_report(struct worker* ATTR_UNUSED(worker),
 		if(strcmp(worker->env.mesh->mods.mod[i]->name, "validator")==0)
 			val += (*worker->env.mesh->mods.mod[i]->get_mem)
 				(&worker->env, i);
+#ifdef CLIENT_SUBNET
+		else if(strcmp(worker->env.mesh->mods.mod[i]->name,
+			"subnet")==0)
+			subnet += (*worker->env.mesh->mods.mod[i]->get_mem)
+				(&worker->env, i);
+#endif /* CLIENT_SUBNET */
 		else	iter += (*worker->env.mesh->mods.mod[i]->get_mem)
 				(&worker->env, i);
 	}
@@ -153,6 +162,17 @@ worker_mem_report(struct worker* ATTR_UNUSED(worker),
 		me += serviced_get_mem(cur_serv);
 	}
 	total = front+back+mesh+msg+rrset+infra+iter+val+ac+superac+me;
+#ifdef CLIENT_SUBNET
+	total += subnet;
+	log_info("Memory conditions: %u front=%u back=%u mesh=%u msg=%u "
+		"rrset=%u infra=%u iter=%u val=%u subnet=%u anchors=%u "
+		"alloccache=%u globalalloccache=%u me=%u",
+		(unsigned)total, (unsigned)front, (unsigned)back, 
+		(unsigned)mesh, (unsigned)msg, (unsigned)rrset, (unsigned)infra,
+		(unsigned)iter, (unsigned)val,
+		(unsigned)subnet, (unsigned)anch, (unsigned)ac,
+		(unsigned)superac, (unsigned)me);
+#else /* no CLIENT_SUBNET */
 	log_info("Memory conditions: %u front=%u back=%u mesh=%u msg=%u "
 		"rrset=%u infra=%u iter=%u val=%u anchors=%u "
 		"alloccache=%u globalalloccache=%u me=%u",
@@ -160,11 +180,15 @@ worker_mem_report(struct worker* ATTR_UNUSED(worker),
 		(unsigned)mesh, (unsigned)msg, (unsigned)rrset, 
 		(unsigned)infra, (unsigned)iter, (unsigned)val, (unsigned)anch,
 		(unsigned)ac, (unsigned)superac, (unsigned)me);
+#endif /* CLIENT_SUBNET */
 	log_info("Total heap memory estimate: %u  total-alloc: %u  "
 		"total-free: %u", (unsigned)total, 
 		(unsigned)unbound_mem_alloc, (unsigned)unbound_mem_freed);
 #else /* no UNBOUND_ALLOC_STATS */
 	size_t val = 0;
+#ifdef CLIENT_SUBNET
+	size_t subnet = 0;
+#endif /* CLIENT_SUBNET */
 	int i;
 	if(verbosity < VERB_QUERY)
 		return;
@@ -174,12 +198,27 @@ worker_mem_report(struct worker* ATTR_UNUSED(worker),
 		if(strcmp(worker->env.mesh->mods.mod[i]->name, "validator")==0)
 			val += (*worker->env.mesh->mods.mod[i]->get_mem)
 				(&worker->env, i);
+#ifdef CLIENT_SUBNET
+		else if(strcmp(worker->env.mesh->mods.mod[i]->name,
+			"subnet")==0)
+			subnet += (*worker->env.mesh->mods.mod[i]->get_mem)
+				(&worker->env, i);
+#endif /* CLIENT_SUBNET */
 	}
+#ifdef CLIENT_SUBNET
+	verbose(VERB_QUERY, "cache memory msg=%u rrset=%u infra=%u val=%u "
+		"subnet=%u",
+		(unsigned)slabhash_get_mem(worker->env.msg_cache),
+		(unsigned)slabhash_get_mem(&worker->env.rrset_cache->table),
+		(unsigned)infra_get_mem(worker->env.infra_cache),
+		(unsigned)val, (unsigned)subnet);
+#else /* no CLIENT_SUBNET */
 	verbose(VERB_QUERY, "cache memory msg=%u rrset=%u infra=%u val=%u",
 		(unsigned)slabhash_get_mem(worker->env.msg_cache),
 		(unsigned)slabhash_get_mem(&worker->env.rrset_cache->table),
 		(unsigned)infra_get_mem(worker->env.infra_cache),
 		(unsigned)val);
+#endif /* CLIENT_SUBNET */
 #endif /* UNBOUND_ALLOC_STATS */
 }
 
@@ -975,38 +1014,48 @@ worker_handle_request(struct comm_point* c, void* arg, int error,
 		return 0;
 	}
 #ifdef USE_DNSCRYPT
-    repinfo->max_udp_size = worker->daemon->cfg->max_udp_size;
-    if(!dnsc_handle_curved_request(worker->daemon->dnscenv, repinfo)) {
-        return 0;
-    }
-    if(c->dnscrypt && !repinfo->is_dnscrypted) {
-        char buf[LDNS_MAX_DOMAINLEN+1];
-        // Check if this is unencrypted and asking for certs
-        if(worker_check_request(c->buffer, worker) != 0) {
-            verbose(VERB_ALGO, "dnscrypt: worker check request: bad query.");
-            log_addr(VERB_CLIENT,"from",&repinfo->addr, repinfo->addrlen);
-            comm_point_drop_reply(repinfo);
-            return 0;
-        }
-        if(!query_info_parse(&qinfo, c->buffer)) {
-            verbose(VERB_ALGO, "dnscrypt: worker parse request: formerror.");
-            log_addr(VERB_CLIENT,"from",&repinfo->addr, repinfo->addrlen);
-            comm_point_drop_reply(repinfo);
-            return 0;
-        }
-        dname_str(qinfo.qname, buf);
-        if(!(qinfo.qtype == LDNS_RR_TYPE_TXT &&
-             strcasecmp(buf, worker->daemon->dnscenv->provider_name) == 0)) {
-            verbose(VERB_ALGO,
-                    "dnscrypt: not TXT %s. Receive: %s %s",
-                    worker->daemon->dnscenv->provider_name,
-                    sldns_rr_descript(qinfo.qtype)->_name,
-                    buf);
-            comm_point_drop_reply(repinfo);
-            return 0;
-        }
-        sldns_buffer_rewind(c->buffer);
-    }
+	repinfo->max_udp_size = worker->daemon->cfg->max_udp_size;
+	if(!dnsc_handle_curved_request(worker->daemon->dnscenv, repinfo)) {
+		worker->stats.num_query_dnscrypt_crypted_malformed++;
+		return 0;
+	}
+	if(c->dnscrypt && !repinfo->is_dnscrypted) {
+		char buf[LDNS_MAX_DOMAINLEN+1];
+		/* Check if this is unencrypted and asking for certs */
+		if(worker_check_request(c->buffer, worker) != 0) {
+			verbose(VERB_ALGO,
+				"dnscrypt: worker check request: bad query.");
+			log_addr(VERB_CLIENT,"from",&repinfo->addr,
+				repinfo->addrlen);
+			comm_point_drop_reply(repinfo);
+			return 0;
+		}
+		if(!query_info_parse(&qinfo, c->buffer)) {
+			verbose(VERB_ALGO,
+				"dnscrypt: worker parse request: formerror.");
+			log_addr(VERB_CLIENT, "from", &repinfo->addr,
+				repinfo->addrlen);
+			comm_point_drop_reply(repinfo);
+			return 0;
+		}
+		dname_str(qinfo.qname, buf);
+		if(!(qinfo.qtype == LDNS_RR_TYPE_TXT &&
+			strcasecmp(buf,
+			worker->daemon->dnscenv->provider_name) == 0)) {
+			verbose(VERB_ALGO,
+				"dnscrypt: not TXT %s. Receive: %s %s",
+				worker->daemon->dnscenv->provider_name,
+				sldns_rr_descript(qinfo.qtype)->_name,
+				buf);
+			comm_point_drop_reply(repinfo);
+			worker->stats.num_query_dnscrypt_cleartext++;
+			return 0;
+		}
+		worker->stats.num_query_dnscrypt_cert++;
+		sldns_buffer_rewind(c->buffer);
+	} else if(c->dnscrypt && repinfo->is_dnscrypted) {
+		worker->stats.num_query_dnscrypt_crypted++;
+	}
 #endif
 #ifdef USE_DNSTAP
 	if(worker->dtenv.log_client_query_messages)
@@ -1376,9 +1425,9 @@ send_reply_rc:
 			tv, 1, c->buffer);
 	}
 #ifdef USE_DNSCRYPT
-    if(!dnsc_handle_uncurved_request(repinfo)) {
-        return 0;
-    }
+	if(!dnsc_handle_uncurved_request(repinfo)) {
+		return 0;
+	}
 #endif
 	return rc;
 }

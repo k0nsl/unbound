@@ -1,3 +1,97 @@
+24 April 2017: Wouter
+	- unbound-checkconf -o allows query of dnstap config variables.
+	  Also unbound-control get_option.  Also for dnscrypt.
+	- trunk contains 1.6.3 version number (changes from 1.6.2 back from
+	  when the 1.6.2rc1 tag has been created).
+
+21 April 2017: Ralph
+	- Fix #1254: clarify ratelimit-{for,below}-domain (from Manu Bretelle).
+	- iana portlist update
+	
+18 April 2017: Ralph
+	- Fix #1252: more indentation inconsistencies.
+	- Fix #1253: unused variable in edns-subnet/addrtree.c:getbit().
+
+13 April 2017: Ralph
+	- Added ECS unit test (from Manu Bretelle).
+	- ECS documentation fix (from Manu Bretelle).
+
+13 April 2017: Wouter
+	- Fix #1250: inconsistent indentation in services/listen_dnsport.c.
+	- tag for 1.6.2rc1
+	- (for 1.6.3:) unbound.h exports the shm stats structures.  They use
+	  type long long and no ifdefs, and ub_ before the typenames.
+
+12 April 2017: Wouter
+	- subnet mem value is available in shm, also when not enabled,
+	  to make the struct easier to memmap by other applications,
+	  independent of the configuration of unbound.
+
+12 April 2017: Ralph
+	- Fix #1247: unbound does not shorten source prefix length when
+	  forwarding ECS.
+	- Properly check for allocation failure in local_data_find_tag_datas.
+	- Fix #1249: unbound doesn't return FORMERR to bogus ECS.
+	- Set SHM ECS memory usage to 0 when module not loaded.
+
+11 April 2017: Ralph
+	- Display ECS module memory usage.
+
+10 April 2017: Wouter
+	- harden-algo-downgrade: no also makes unbound more lenient about
+	  digest algorithms in DS records.
+
+10 April 2017: Ralph
+	- Remove ECS option after REFUSED answer.
+	- Fix small memory leak in edns_opt_copy_alloc.
+	- Respip dereference after NULL check.
+	- Zero initialize addrtree allocation.
+	- Use correct identifier for SHM destroy.
+
+7 April 2017: George
+	- Fix pythonmod for cb changes.
+	- Some whitespace fixup.
+
+7 April 2017: Ralph
+	- Unlock view in respip unit test
+
+6 April 2017: Ralph
+	- Generalise inplace callback (de)registration
+	- (de)register inplace callbacks for module id
+	- No unbound-control set_option for ECS options
+	- Deprecated client-subnet-opcode config option
+	- Introduced client-subnet-always-forward config option
+	- Changed max-client-subnet-ipv6 default to 56 (as in RFC)
+	- Removed extern ECS config options
+	- module_restart_next now calls clear on all following modules
+	- Also create ECS module qstate on module_event_pass event
+	- remove malloc from inplace_cb_register
+
+6 April 2017: Wouter
+	- Small fixup for documentation.
+	- iana portlist update
+	- Fix respip for braces when locks arent used.
+	- Fix pythonmod for cb changes.
+
+4 April 2017: Wouter
+	- Fix #1244: document that use of chroot requires trust anchor file to
+	  be under chroot.
+	- iana portlist update
+
+3 April 2017: Ralph
+	- Do not add current time twice to TTL before ECS cache store.
+	- Do not touch rrset cache after ECS cache message generation.
+	- Use LDNS_EDNS_CLIENT_SUBNET as default ECS opcode.
+
+3 April 2017: Wouter
+	- Fix #1217: Add metrics to unbound-control interface showing
+	  crypted, cert request, plaintext and malformed queries (from
+	  Manu Bretelle).
+	- iana portlist update
+
+27 March 2017: Wouter
+	- Remove (now unused) event2 include from dnscrypt code.
+
 24 March 2017: George
 	- Fix to prevent non-referal query from being cached as referal when the
 	  no_cache_store flag was set.
@@ -163,7 +257,7 @@
 	- Fix #1184: Log DNS replies. This includes the same logging
 	  information that DNS queries and response code and response size,
 	  patch from Larissa Feng.
-	- Fix #1185: Source IP rate limiting, patch from Larissa Feng.
+	- Fix #1187: Source IP rate limiting, patch from Larissa Feng.
 
 3 January 2017: Wouter
 	- configure --enable-systemd and lets unbound use systemd sockets if

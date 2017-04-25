@@ -403,6 +403,8 @@ config_tag_test(void)
 }
 	
 #include "util/rtt.h"
+#include "util/timehist.h"
+#include "libunbound/unbound.h"
 /** test RTT code */
 static void
 rtt_test(void)
@@ -426,6 +428,8 @@ rtt_test(void)
 		unit_assert( rtt_timeout(&r) > RTT_MIN_TIMEOUT-1);
 		unit_assert( rtt_timeout(&r) < RTT_MAX_TIMEOUT+1);
 	}
+	/* must be the same, timehist bucket is used in stats */
+	unit_assert(UB_STATS_BUCKET_NUM == NUM_BUCKETS_HIST);
 }
 
 #include "services/cache/infra.h"
@@ -685,9 +689,11 @@ respip_view_conf_actions_test(void)
 	v = views_find_view(views, "view1", 0);
 	unit_assert(v);
 	verify_respip_set_actions(v->respip_set, config_response_ip_view1, clen1);
+	lock_rw_unlock(&v->lock);
 	v = views_find_view(views, "view2", 0);
 	unit_assert(v);
 	verify_respip_set_actions(v->respip_set, config_response_ip_view2, clen2);
+	lock_rw_unlock(&v->lock);
 }
 
 typedef struct addr_data {char* ip; char* data;} addr_data_t;

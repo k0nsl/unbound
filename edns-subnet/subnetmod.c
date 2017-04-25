@@ -128,7 +128,8 @@ ecs_opt_list_append(struct ecs_data* ecs, struct edns_option** list,
 				~(0xFF >> (ecs->subnet_source_mask % 8)));
 		sldns_buffer_flip(buf);
 
-		edns_opt_list_append(list, EDNSSUBNET_OPCODE,
+		edns_opt_list_append(list,
+				qstate->env->cfg->client_subnet_opcode,
 				sn_octs + sn_octs_remainder + 4,
 				sldns_buffer_begin(buf), qstate->region);
 	}
@@ -138,9 +139,8 @@ int ecs_whitelist_check(struct query_info* ATTR_UNUSED(qinfo),
 	uint16_t ATTR_UNUSED(flags), struct module_qstate* qstate,
 	struct sockaddr_storage* addr, socklen_t addrlen,
 	uint8_t* ATTR_UNUSED(zone), size_t ATTR_UNUSED(zonelen),
-	struct regional* ATTR_UNUSED(region), void* cbargs)
+	struct regional* ATTR_UNUSED(region), int id, void* ATTR_UNUSED(cbargs))
 {
-	int id = *((int*)cbargs);
 	struct subnet_qstate *sq;
 	struct subnet_env *sn_env;
 	
@@ -152,7 +152,8 @@ int ecs_whitelist_check(struct query_info* ATTR_UNUSED(qinfo),
 	 * received from nameserver. */
 	qstate->no_cache_store = 0;
 
-	if(sq->ecs_server_out.subnet_validdata && (sq->subnet_downstream ||
+	if(sq->ecs_server_out.subnet_validdata && ((sq->subnet_downstream &&
+		qstate->env->cfg->client_subnet_always_forward) ||
 		upstream_is_whitelisted(sn_env->edns_subnet_upstreams, 
 		addr, addrlen))) {
 		/* Address on whitelist or client query contains ECS option, we
@@ -168,7 +169,7 @@ int ecs_whitelist_check(struct query_info* ATTR_UNUSED(qinfo),
 		/* Outgoing ECS option is set, but we don't want to sent it to
 		 * this address, remove option. */
 		edns_opt_list_remove(&qstate->edns_opts_back_out,
-			EDNSSUBNET_OPCODE);
+			qstate->env->cfg->client_subnet_opcode);
 		sq->subnet_sent = 0;
 	}
 	return 1;
@@ -208,11 +209,13 @@ subnetmod_init(struct module_env *env, int id)
 		return 0;
 	}
 
-	verbose(VERB_QUERY, "subnet: option registered (%d)", EDNSSUBNET_OPCODE);
+	verbose(VERB_QUERY, "subnet: option registered (%d)",
+		env->cfg->client_subnet_opcode);
 	/* Create new mesh state for all queries. */
 	env->unique_mesh = 1;
-	if(!edns_register_option(EDNSSUBNET_OPCODE,
-		1 /* bypass cache */, 0 /* no aggregation */, env)) {
+	if(!edns_register_option(env->cfg->client_subnet_opcode,
+		env->cfg->client_subnet_always_forward /* bypass cache */,
+		0 /* no aggregation */, env)) {
 		log_err("subnet: could not register opcode");
 		upstream_delete(sn_env->edns_subnet_upstreams);
 		slabhash_delete(sn_env->subnet_msg_cache);
@@ -220,9 +223,12 @@ subnetmod_init(struct module_env *env, int id)
 		env->modinfo[id] = NULL;
 		return 0;
 	}
-	inplace_cb_query_register(ecs_whitelist_check, &id, sizeof(id), env);
-	inplace_cb_edns_back_parsed_register(ecs_edns_back_parsed, &id,
-		sizeof(id), env);
+	inplace_cb_register((void*)ecs_whitelist_check, inplace_cb_query, NULL,
+		env, id);
+	inplace_cb_register((void*)ecs_edns_back_parsed,
+		inplace_cb_edns_back_parsed, NULL, env, id);
+	inplace_cb_register((void*)ecs_query_response,
+		inplace_cb_query_response, NULL, env, id);
 	lock_rw_init(&sn_env->biglock);
 	return 1;
 }
@@ -235,8 +241,8 @@ subnetmod_deinit(struct module_env *env, int id)
 		return;
 	sn_env = (struct subnet_env*)env->modinfo[id];
 	lock_rw_destroy(&sn_env->biglock);
-	inplace_cb_edns_back_parsed_delete(env);
-	inplace_cb_query_delete(env);
+	inplace_cb_delete(env, inplace_cb_edns_back_parsed, id);
+	inplace_cb_delete(env, inplace_cb_query, id);
 	upstream_delete(sn_env->edns_subnet_upstreams);
 	slabhash_delete(sn_env->subnet_msg_cache);
 	alloc_clear(&sn_env->alloc);
@@ -276,18 +282,20 @@ sizefunc(void *elemptr) {
  * NULL on failure to create. */
 static struct addrtree* 
 get_tree(struct subnet_msg_cache_data *data, struct ecs_data *edns, 
-	struct subnet_env *env)
+	struct subnet_env *env, struct config_file* cfg)
 {
 	struct addrtree *tree;
 	if (edns->subnet_addr_fam == EDNSSUBNET_ADDRFAM_IP4) {
 		if (!data->tree4)
-			data->tree4 = addrtree_create(EDNSSUBNET_MAX_SUBNET_IP4, 
-				&delfunc, &sizefunc, env, ECS_MAX_TREESIZE);
+			data->tree4 = addrtree_create(
+				cfg->max_client_subnet_ipv4, &delfunc,
+				&sizefunc, env, ECS_MAX_TREESIZE);
 		tree = data->tree4;
 	} else {
 		if (!data->tree6)
-			data->tree6 = addrtree_create(EDNSSUBNET_MAX_SUBNET_IP6, 
-				&delfunc, &sizefunc, env, ECS_MAX_TREESIZE);
+			data->tree6 = addrtree_create(
+				cfg->max_client_subnet_ipv6, &delfunc,
+				&sizefunc, env, ECS_MAX_TREESIZE);
 		tree = data->tree6;
 	}
 	return tree;
@@ -306,11 +314,11 @@ update_cache(struct module_qstate *qstate, int id)
 	struct ecs_data *edns = &sq->ecs_client_in;
 	size_t i;
 
-	/** We already calculated hash upon lookup */
+	/* We already calculated hash upon lookup */
 	hashvalue_type h = qstate->minfo[id] ? 
 		((struct subnet_qstate*)qstate->minfo[id])->qinfo_hash : 
 		query_info_hash(&qstate->qinfo, qstate->query_flags);
-	/** Step 1, general qinfo lookup */
+	/* Step 1, general qinfo lookup */
 	struct lruhash_entry *lru_entry = slabhash_lookup(subnet_msg_cache, h,
 		&qstate->qinfo, 1);
 	int acquired_lock = (lru_entry != NULL);
@@ -336,8 +344,8 @@ update_cache(struct module_qstate *qstate, int id)
 			return;
 		}
 	}
-	/** Step 2, find the correct tree */
-	if (!(tree = get_tree(lru_entry->data, edns, sne))) {
+	/* Step 2, find the correct tree */
+	if (!(tree = get_tree(lru_entry->data, edns, sne, qstate->env->cfg))) {
 		if (acquired_lock) lock_rw_unlock(&lru_entry->lock);
 		log_err("Subnet cache insertion failed");
 		return;
@@ -360,7 +368,7 @@ update_cache(struct module_qstate *qstate, int id)
 	addrtree_insert(tree, (addrkey_t*)edns->subnet_addr, 
 		edns->subnet_source_mask, 
 		sq->ecs_server_in.subnet_scope_mask, rep,
-		rep->ttl + *qstate->env->now, *qstate->env->now);
+		rep->ttl, *qstate->env->now);
 	if (acquired_lock) {
 		lock_rw_unlock(&lru_entry->lock);
 	} else {
@@ -369,7 +377,7 @@ update_cache(struct module_qstate *qstate, int id)
 	}
 }
 
-/* return true iff reply is sent. */
+/** Lookup in cache and reply true iff reply is sent. */
 static int
 lookup_and_reply(struct module_qstate *qstate, int id, struct subnet_qstate *sq)
 {
@@ -385,30 +393,30 @@ lookup_and_reply(struct module_qstate *qstate, int id, struct subnet_qstate *sq)
 
 	memset(&sq->ecs_client_out, 0, sizeof(sq->ecs_client_out));
 
-	if (sq) sq->qinfo_hash = h; /** Might be useful on cache miss */
+	if (sq) sq->qinfo_hash = h; /* Might be useful on cache miss */
 	e = slabhash_lookup(sne->subnet_msg_cache, h, &qstate->qinfo, 1);
-	if (!e) return 0; /** qinfo not in cache */
+	if (!e) return 0; /* qinfo not in cache */
 	data = e->data;
 	tree = (ecs->subnet_addr_fam == EDNSSUBNET_ADDRFAM_IP4)?
 		data->tree4 : data->tree6;
-	if (!tree) { /** qinfo in cache but not for this family */
+	if (!tree) { /* qinfo in cache but not for this family */
 		lock_rw_unlock(&e->lock);
 		return 0;
 	}
 	node = addrtree_find(tree, (addrkey_t*)ecs->subnet_addr, 
 		ecs->subnet_source_mask, *env->now);
-	if (!node) { /** plain old cache miss */
+	if (!node) { /* plain old cache miss */
 		lock_rw_unlock(&e->lock);
 		return 0;
 	}
 
-	qstate->return_msg = tomsg(env, &qstate->qinfo,
+	qstate->return_msg = tomsg(NULL, &qstate->qinfo,
 		(struct reply_info *)node->elem, qstate->region, *env->now,
 		env->scratch);
 	scope = (uint8_t)node->scope;
 	lock_rw_unlock(&e->lock);
 	
-	if (!qstate->return_msg) { /** TTL expired */
+	if (!qstate->return_msg) { /* Failed allocation or expired TTL */
 		return 0;
 	}
 	
@@ -452,18 +460,18 @@ eval_response(struct module_qstate *qstate, int id, struct subnet_qstate *sq)
 
 	if (!qstate->return_msg) return module_error;
 	
-	/** We have not asked for subnet data */
+	/* We have not asked for subnet data */
 	if (!sq->subnet_sent) {
 		if (s_in->subnet_validdata)
 			verbose(VERB_QUERY, "subnet: received spurious data");
-		if (sq->subnet_downstream) /** Copy back to client */
+		if (sq->subnet_downstream) /* Copy back to client */
 			cp_edns_bad_response(c_out, c_in);
 		return module_finished;
 	}
 	
-	/** subnet sent but nothing came back */
+	/* subnet sent but nothing came back */
 	if (!s_in->subnet_validdata) {
-		/** The authority indicated no support for edns subnet. As a
+		/* The authority indicated no support for edns subnet. As a
 		 * consequence the answer ended up in the regular cache. It
 		 * is still usefull to put it in the edns subnet cache for
 		 * when a client explicitly asks for subnet specific answer. */
@@ -476,23 +484,23 @@ eval_response(struct module_qstate *qstate, int id, struct subnet_qstate *sq)
 		return module_finished;
 	}
 	
-	/** Being here means we have asked for and got a subnet specific 
+	/* Being here means we have asked for and got a subnet specific 
 	 * answer. Also, the answer from the authority is not yet cached 
 	 * anywhere. */
 	
-	/** can we accept response? */
+	/* can we accept response? */
 	if(s_out->subnet_addr_fam != s_in->subnet_addr_fam ||
 		s_out->subnet_source_mask != s_in->subnet_source_mask ||
 		!common_prefix(s_out->subnet_addr, s_in->subnet_addr, 
 			s_out->subnet_source_mask))
 	{
-		/** we can not accept, restart query without option */
+		/* we can not accept, restart query without option */
 		verbose(VERB_QUERY, "subnet: forged data");
 		s_out->subnet_validdata = 0;
 		(void)edns_opt_list_remove(&qstate->edns_opts_back_out,
-			EDNSSUBNET_OPCODE);
+			qstate->env->cfg->client_subnet_opcode);
 		sq->subnet_sent = 0;
-		return module_wait_module;
+		return module_restart_next;
 	}
 
 	lock_rw_wrlock(&sne->biglock);
@@ -500,7 +508,7 @@ eval_response(struct module_qstate *qstate, int id, struct subnet_qstate *sq)
 	lock_rw_unlock(&sne->biglock);
 	
 	if (sq->subnet_downstream) {
-		/** Client wants to see the answer, echo option back
+		/* Client wants to see the answer, echo option back
 		 * and adjust the scope. */
 		c_out->subnet_addr_fam = c_in->subnet_addr_fam;
 		c_out->subnet_source_mask = c_in->subnet_source_mask;
@@ -513,8 +521,7 @@ eval_response(struct module_qstate *qstate, int id, struct subnet_qstate *sq)
 
 /** Parse EDNS opt data containing ECS */
 static int
-parse_subnet_option(struct edns_option* ecs_option,
-	struct ecs_data* ecs)
+parse_subnet_option(struct edns_option* ecs_option, struct ecs_data* ecs)
 {
 	memset(ecs, 0, sizeof(*ecs));
 	if (ecs_option->opt_len < 4)
@@ -550,28 +557,30 @@ parse_subnet_option(struct edns_option* ecs_option,
 }
 
 static void
-subnet_option_from_ss(struct sockaddr_storage *ss, struct ecs_data* ecs)
+subnet_option_from_ss(struct sockaddr_storage *ss, struct ecs_data* ecs,
+	struct config_file* cfg)
 {
 	void* sinaddr;
+
 	/* Construct subnet option from original query */
 	if(((struct sockaddr_in*)ss)->sin_family == AF_INET) {
-		ecs->subnet_source_mask = EDNSSUBNET_MAX_SUBNET_IP4;
+		ecs->subnet_source_mask = cfg->max_client_subnet_ipv4;
 		ecs->subnet_addr_fam = EDNSSUBNET_ADDRFAM_IP4;
 		sinaddr = &((struct sockaddr_in*)ss)->sin_addr;
 		if (!copy_clear( ecs->subnet_addr, INET6_SIZE,
 			(uint8_t *)sinaddr, INET_SIZE,
-			EDNSSUBNET_MAX_SUBNET_IP4)) {
+			ecs->subnet_source_mask)) {
 			ecs->subnet_validdata = 1;
 		}
 	}
 #ifdef INET6
 	else {
-		ecs->subnet_source_mask = EDNSSUBNET_MAX_SUBNET_IP6;
+		ecs->subnet_source_mask = cfg->max_client_subnet_ipv6;
 		ecs->subnet_addr_fam = EDNSSUBNET_ADDRFAM_IP6;
 		sinaddr = &((struct sockaddr_in6*)ss)->sin6_addr;
 		if (!copy_clear( ecs->subnet_addr, INET6_SIZE,
 			(uint8_t *)sinaddr, INET6_SIZE,
-			EDNSSUBNET_MAX_SUBNET_IP6)) {
+			ecs->subnet_source_mask)) {
 			ecs->subnet_validdata = 1;
 		}
 	}
@@ -581,18 +590,40 @@ subnet_option_from_ss(struct sockaddr_storage *ss, struct ecs_data* ecs)
 }
 
 int
-ecs_edns_back_parsed(struct module_qstate* qstate, void* cbargs)
+ecs_query_response(struct module_qstate* qstate, struct dns_msg* response,
+	int id, void* ATTR_UNUSED(cbargs))
 {
-	int id = *((int*)cbargs);
+	struct subnet_qstate *sq;
+	
+	if(!response || !(sq=(struct subnet_qstate*)qstate->minfo[id]))
+		return 1;
+
+	if(sq->subnet_sent &&
+		FLAGS_GET_RCODE(response->rep->flags) == LDNS_RCODE_REFUSED) {
+		/* REFUSED reponse to ECS query, remove ECS option. */
+		edns_opt_list_remove(&qstate->edns_opts_back_out,
+			qstate->env->cfg->client_subnet_opcode);
+		sq->subnet_sent = 0;
+		memset(&sq->ecs_server_out, 0, sizeof(sq->ecs_server_out));
+	}
+	return 1;
+}
+
+int
+ecs_edns_back_parsed(struct module_qstate* qstate, int id,
+	void* ATTR_UNUSED(cbargs))
+{
 	struct subnet_qstate *sq;
 	struct edns_option* ecs_opt;
 	
 	if(!(sq=(struct subnet_qstate*)qstate->minfo[id]))
 		return 1;
 	if((ecs_opt = edns_opt_list_find(
-		qstate->edns_opts_back_in, EDNSSUBNET_OPCODE))) {
+		qstate->edns_opts_back_in,
+		qstate->env->cfg->client_subnet_opcode))) {
 		if(parse_subnet_option(ecs_opt, &sq->ecs_server_in) &&
-			sq->subnet_sent && sq->ecs_server_in.subnet_validdata)
+			sq->subnet_sent &&
+			sq->ecs_server_in.subnet_validdata)
 			/* Only skip global cache store if we sent an ECS option
 			 * and received one back. Answers from non-whitelisted
 			 * servers will end up in global cache. Ansers for
@@ -616,7 +647,8 @@ subnetmod_operate(struct module_qstate *qstate, enum module_ev event,
 		strmodulevent(event));
 	log_query_info(VERB_QUERY, "subnet operate: query", &qstate->qinfo);
 
-	if(event == module_event_new && sq == NULL) {
+	if((event == module_event_new || event == module_event_pass) &&
+		sq == NULL) {
 		struct edns_option* ecs_opt;
 		if(!subnet_new_qstate(qstate, id)) {
 			qstate->return_msg = NULL;
@@ -627,15 +659,21 @@ subnetmod_operate(struct module_qstate *qstate, enum module_ev event,
 		sq = (struct subnet_qstate*)qstate->minfo[id];
 
 		if((ecs_opt = edns_opt_list_find(
-			qstate->edns_opts_front_in, EDNSSUBNET_OPCODE))) {
-			if(parse_subnet_option(ecs_opt, &sq->ecs_client_in)) {
-				sq->subnet_downstream = 1;
+			qstate->edns_opts_front_in,
+			qstate->env->cfg->client_subnet_opcode))) {
+			if(!parse_subnet_option(ecs_opt, &sq->ecs_client_in)) {
+				/* Wrongly formatted ECS option. RFC mandates to
+				 * return FORMERROR. */
+				qstate->return_rcode = LDNS_RCODE_FORMERR;
+				qstate->ext_state[id] = module_finished;
+				return;
 			}
+			sq->subnet_downstream = 1;
 		}
 		else if(qstate->mesh_info->reply_list) {
 			subnet_option_from_ss(
 				&qstate->mesh_info->reply_list->query_reply.addr,
-				&sq->ecs_client_in);
+				&sq->ecs_client_in, qstate->env->cfg);
 		}
 		
 		if(sq->ecs_client_in.subnet_validdata == 0) {
@@ -663,6 +701,20 @@ subnetmod_operate(struct module_qstate *qstate, enum module_ev event,
 			sq->ecs_client_in.subnet_addr_fam;
 		sq->ecs_server_out.subnet_source_mask =
 			sq->ecs_client_in.subnet_source_mask;
+		/* Limit source prefix to configured maximum */
+		if(sq->ecs_server_out.subnet_addr_fam == EDNSSUBNET_ADDRFAM_IP4 
+			&& sq->ecs_server_out.subnet_source_mask >
+			qstate->env->cfg->max_client_subnet_ipv4)
+			sq->ecs_server_out.subnet_source_mask =
+				qstate->env->cfg->max_client_subnet_ipv4;
+		else if(sq->ecs_server_out.subnet_addr_fam == EDNSSUBNET_ADDRFAM_IP6 
+			&& sq->ecs_server_out.subnet_source_mask >
+			qstate->env->cfg->max_client_subnet_ipv6)
+			sq->ecs_server_out.subnet_source_mask =
+				qstate->env->cfg->max_client_subnet_ipv6;
+		/* Safe to copy completely, even if the source is limited by the
+		 * configuration. ecs_opt_list_append() will limit the address.
+		 * */
 		memcpy(&sq->ecs_server_out.subnet_addr,
 			sq->ecs_client_in.subnet_addr, INET6_SIZE);
 		sq->ecs_server_out.subnet_scope_mask = 0;
@@ -728,7 +780,8 @@ subnetmod_get_mem(struct module_env *env, int id)
 	struct subnet_env *sn_env = env->modinfo[id];
 	if (!sn_env) return 0;
 	return sizeof(*sn_env) + 
-		slabhash_get_mem(sn_env->subnet_msg_cache);
+		slabhash_get_mem(sn_env->subnet_msg_cache) +
+		upstream_get_mem(sn_env->edns_subnet_upstreams);
 }
 
 /**

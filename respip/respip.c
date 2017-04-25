@@ -125,11 +125,11 @@ respip_find_or_create(struct respip_set* set, const char* ipstr, int create)
 	node = (struct resp_addr*)addr_tree_find(&set->ip_tree, &addr, addrlen, net);
 	if(!node && create) {
 		node = regional_alloc_zero(set->region, sizeof(*node));
-		node->action = respip_none;
 		if(!node) {
 			log_err("out of memory");
 			return NULL;
 		}
+		node->action = respip_none;
 		if(!addr_tree_insert(&set->ip_tree, &node->node, &addr,
 			addrlen, net)) {
 			/* We know we didn't find it, so this should be
@@ -895,8 +895,9 @@ respip_rewrite_reply(const struct query_info* qinfo,
 		}
 	}
   done:
-	if(view)
+	if(view) {
 		lock_rw_unlock(&view->lock);
+	}
 	if(ret) {
 		/* If we're redirecting the original answer to a
 		 * CNAME, record the CNAME rrset so the caller can take

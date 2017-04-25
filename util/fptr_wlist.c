@@ -496,21 +496,37 @@ int fptr_whitelist_inplace_cb_reply_generic(inplace_cb_reply_func_type* fptr,
 	return 0;
 }
 
-int fptr_whitelist_inplace_cb_query(inplace_cb_query_func_type* ATTR_UNUSED(fptr))
+int fptr_whitelist_inplace_cb_query(inplace_cb_query_func_type* fptr)
 {
 #ifdef CLIENT_SUBNET
 	if(fptr == &ecs_whitelist_check)
 		return 1;
+#else
+	(void)fptr;
 #endif
 	return 0;
 }
 
 int fptr_whitelist_inplace_cb_edns_back_parsed(
-	inplace_cb_edns_back_parsed_func_type* ATTR_UNUSED(fptr))
+	inplace_cb_edns_back_parsed_func_type* fptr)
 {
 #ifdef CLIENT_SUBNET
 	if(fptr == &ecs_edns_back_parsed)
 		return 1;
+#else
+	(void)fptr;
+#endif
+	return 0;
+}
+
+int fptr_whitelist_inplace_cb_query_response(
+	inplace_cb_query_response_func_type* fptr)
+{
+#ifdef CLIENT_SUBNET
+	if(fptr == &ecs_query_response)
+		return 1;
+#else
+	(void)fptr;
 #endif
 	return 0;
 }

@@ -178,9 +178,10 @@ config_create(void)
 	cfg->forwards = NULL;
 #ifdef CLIENT_SUBNET
 	cfg->client_subnet = NULL;
-	cfg->client_subnet_opcode = 8;
+	cfg->client_subnet_opcode = LDNS_EDNS_CLIENT_SUBNET;
+	cfg->client_subnet_always_forward = 0;
 	cfg->max_client_subnet_ipv4 = 24;
-	cfg->max_client_subnet_ipv6 = 64;
+	cfg->max_client_subnet_ipv6 = 56;
 #endif
 	cfg->views = NULL;
 	cfg->acls = NULL;
@@ -273,7 +274,7 @@ config_create(void)
 	cfg->qname_minimisation_strict = 0;
 	cfg->shm_enable = 0;
 	cfg->shm_key = 11777;
-    cfg->dnscrypt = 0;
+	cfg->dnscrypt = 0;
 	cfg->dnscrypt_port = 0;
 	cfg->dnscrypt_provider = NULL;
 	cfg->dnscrypt_provider_cert = NULL;
@@ -517,10 +518,37 @@ int config_set_option(struct config_file* cfg, const char* opt,
 	else S_STR("python-script:", python_script)
 	else S_YNO("disable-dnssec-lame-check:", disable_dnssec_lame_check)
 #ifdef CLIENT_SUBNET
-	else S_STRLIST("send-client-subnet", client_subnet)
-	else S_NUMBER_OR_ZERO("max-client-subnet-ipv4:", max_client_subnet_ipv4)
-	else S_NUMBER_OR_ZERO("max-client-subnet-ipv6:", max_client_subnet_ipv6)
-	else S_NUMBER_OR_ZERO("client-subnet-opcode:", client_subnet_opcode)
+	/* Can't set max subnet prefix here, since that value is used when
+	 * generating the address tree. */
+	/* No client-subnet-always-forward here, module registration depends on
+	 * this option. */
+#endif
+#ifdef USE_DNSTAP
+	else S_YNO("dnstap-enable:", dnstap)
+	else S_STR("dnstap-socket-path:", dnstap_socket_path)
+	else S_YNO("dnstap-send-identity:", dnstap_send_identity)
+	else S_YNO("dnstap-send-version:", dnstap_send_version)
+	else S_STR("dnstap-identity:", dnstap_identity)
+	else S_STR("dnstap-version:", dnstap_version)
+	else S_YNO("dnstap-log-resolver-query-messages:",
+		dnstap_log_resolver_query_messages)
+	else S_YNO("dnstap-log-resolver-response-messages:",
+		dnstap_log_resolver_response_messages)
+	else S_YNO("dnstap-log-client-query-messages:",
+		dnstap_log_client_query_messages)
+	else S_YNO("dnstap-log-client-response-messages:",
+		dnstap_log_client_response_messages)
+	else S_YNO("dnstap-log-forwarder-query-messages:",
+		dnstap_log_forwarder_query_messages)
+	else S_YNO("dnstap-log-forwarder-response-messages:",
+		dnstap_log_forwarder_response_messages)
+#endif
+#ifdef USE_DNSCRYPT
+	else S_YNO("dnscrypt-enable:", dnscrypt)
+	else S_NUMBER_NONZERO("dnscrypt-port:", dnscrypt_port)
+	else S_STR("dnscrypt-provider:", dnscrypt_provider)
+	else S_STRLIST("dnscrypt-provider-cert:", dnscrypt_provider_cert)
+	else S_STRLIST("dnscrypt-secret-key:", dnscrypt_secret_key)
 #endif
 	else if(strcmp(opt, "ip-ratelimit:") == 0) {
 	    IS_NUMBER_OR_ZERO; cfg->ip_ratelimit = atoi(val);
@@ -565,7 +593,9 @@ int config_set_option(struct config_file* cfg, const char* opt,
 		 * stub-ssl-upstream, forward-zone,
 		 * name, forward-addr, forward-host,
 		 * ratelimit-for-domain, ratelimit-below-domain,
-		 * local-zone-tag, access-control-view */
+		 * local-zone-tag, access-control-view 
+		 * send-client-subnet client-subnet-always-forward
+		 * max-client-subnet-ipv4 max-client-subnet-ipv6 */
 		return 0;
 	}
 	return 1;
@@ -841,7 +871,35 @@ config_get_option(struct config_file* cfg, const char* opt,
 	else O_LST(opt, "send-client-subnet", client_subnet)
 	else O_DEC(opt, "max-client-subnet-ipv4", max_client_subnet_ipv4)
 	else O_DEC(opt, "max-client-subnet-ipv6", max_client_subnet_ipv6)
-	else O_DEC(opt, "client-subnet-opcode", client_subnet_opcode)
+	else O_YNO(opt, "client-subnet-always-forward:",
+		client_subnet_always_forward)
+#endif
+#ifdef USE_DNSTAP
+	else O_YNO(opt, "dnstap-enable", dnstap)
+	else O_STR(opt, "dnstap-socket-path", dnstap_socket_path)
+	else O_YNO(opt, "dnstap-send-identity", dnstap_send_identity)
+	else O_YNO(opt, "dnstap-send-version", dnstap_send_version)
+	else O_STR(opt, "dnstap-identity", dnstap_identity)
+	else O_STR(opt, "dnstap-version", dnstap_version)
+	else O_YNO(opt, "dnstap-log-resolver-query-messages",
+		dnstap_log_resolver_query_messages)
+	else O_YNO(opt, "dnstap-log-resolver-response-messages",
+		dnstap_log_resolver_response_messages)
+	else O_YNO(opt, "dnstap-log-client-query-messages",
+		dnstap_log_client_query_messages)
+	else O_YNO(opt, "dnstap-log-client-response-messages",
+		dnstap_log_client_response_messages)
+	else O_YNO(opt, "dnstap-log-forwarder-query-messages",
+		dnstap_log_forwarder_query_messages)
+	else O_YNO(opt, "dnstap-log-forwarder-response-messages",
+		dnstap_log_forwarder_response_messages)
+#endif
+#ifdef USE_DNSCRYPT
+	else O_YNO(opt, "dnscrypt-enable", dnscrypt)
+	else O_DEC(opt, "dnscrypt-port", dnscrypt_port)
+	else O_STR(opt, "dnscrypt-provider", dnscrypt_provider)
+	else O_LST(opt, "dnscrypt-provider-cert", dnscrypt_provider_cert)
+	else O_LST(opt, "dnscrypt-secret-key", dnscrypt_secret_key)
 #endif
 	else O_YNO(opt, "unblock-lan-zones", unblock_lan_zones)
 	else O_YNO(opt, "insecure-lan-zones", insecure_lan_zones)
@@ -974,7 +1032,7 @@ config_read(struct config_file* cfg, const char* filename, const char* chroot)
 	ub_c_parse();
 	fclose(in);
 
-    if(!cfg->dnscrypt) cfg->dnscrypt_port = 0;
+	if(!cfg->dnscrypt) cfg->dnscrypt_port = 0;
 
 	if(cfg_parser->errors != 0) {
 		fprintf(stderr, "read %s failed: %d errors in configuration file\n",
@@ -1624,11 +1682,6 @@ config_apply(struct config_file* config)
 	MAX_NEG_TTL = (time_t)config->max_negative_ttl;
 	RTT_MIN_TIMEOUT = config->infra_cache_min_rtt;
 	EDNS_ADVERTISED_SIZE = (uint16_t)config->edns_buffer_size;
-#ifdef CLIENT_SUBNET
-	EDNSSUBNET_OPCODE = (uint16_t)config->client_subnet_opcode;
-	EDNSSUBNET_MAX_SUBNET_IP4 = (uint8_t)config->max_client_subnet_ipv4;
-	EDNSSUBNET_MAX_SUBNET_IP6 = (uint8_t)config->max_client_subnet_ipv6;
-#endif
 	MINIMAL_RESPONSES = config->minimal_responses;
 	RRSET_ROUNDROBIN = config->rrset_roundrobin;
 	log_set_time_asc(config->log_time_ascii);
