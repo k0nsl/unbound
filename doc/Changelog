@@ -1,3 +1,38 @@
+9 May 2017: Ralph
+	- Add 'c' to getopt() in testbound.
+	- iana portlist update
+
+8 May 2017: Wouter
+	- Fix tcp-mss failure printout text.
+	- Set SO_REUSEADDR on outgoing tcp connections to fix the bind before
+	  connect limited tcp connections.  With the option tcp connections
+	  can share the same source port (for different destinations).
+
+2 May 2017: Ralph
+	- Added mesh_add_sub to add detached mesh entries.
+	- Use mesh_add_sub for key tag signaling query.
+
+2 May 2017: Wouter
+	- Added test for leak of stub information.
+	- Fix sldns wire2str printout of RR type CAA tags.
+	- Fix sldns int16_data parse.
+	- Fix sldns parse and printout of TSIG RRs.
+	- sldns SMIMEA and AVC definitions, same as getdns definitions.
+
+1 May 2017: Wouter
+	- Fix #1259: "--disable-ecdsa" argument overwritten 
+	  by "#ifdef SHA256_DIGEST_LENGTH@daemon/remote.c".
+	- iana portlist update
+	- Fix #1258: Windows 10 X64 unbound 1.6.2 service will not start.
+	  and fix that 64bit getting installed in C:\Program Files (x86).
+
+26 April 2017: Ralph
+	- Implemented trust anchor signaling using key tag query.
+
+26 April 2017: Wouter
+	- Based on #1257: check parse limit before t increment in sldns RR
+	  string parse routine.
+
 24 April 2017: Wouter
 	- unbound-checkconf -o allows query of dnstap config variables.
 	  Also unbound-control get_option.  Also for dnscrypt.

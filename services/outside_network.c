@@ -204,6 +204,9 @@ outnet_tcp_take_into_use(struct waiting_tcp* w, uint8_t* pkt, size_t pkt_len)
 {
 	struct pending_tcp* pend = w->outnet->tcp_free;
 	int s;
+#ifdef SO_REUSEADDR
+	int on = 1;
+#endif
 	log_assert(pend);
 	log_assert(pkt);
 	log_assert(w->addrlen > 0);
@@ -225,13 +228,20 @@ outnet_tcp_take_into_use(struct waiting_tcp* w, uint8_t* pkt, size_t pkt_len)
 		return 0;
 	}
 
+#ifdef SO_REUSEADDR
+	if(setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (void*)&on,
+		(socklen_t)sizeof(on)) < 0) {
+		verbose(VERB_ALGO, "outgoing tcp:"
+			" setsockopt(.. SO_REUSEADDR ..) failed");
+	}
+#endif
 	if (w->outnet->tcp_mss > 0) {
 #if defined(IPPROTO_TCP) && defined(TCP_MAXSEG)
 		if(setsockopt(s, IPPROTO_TCP, TCP_MAXSEG,
 			(void*)&w->outnet->tcp_mss,
 			(socklen_t)sizeof(w->outnet->tcp_mss)) < 0) {
 			verbose(VERB_ALGO, "outgoing tcp:"
-				" setsockopt(.. SO_REUSEADDR ..) failed");
+				" setsockopt(.. TCP_MAXSEG ..) failed");
 		}
 #else
 		verbose(VERB_ALGO, "outgoing tcp:"
