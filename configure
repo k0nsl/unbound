@@ -638,6 +638,8 @@ INSTALLTARGET
 ALLTARGET
 SOURCEFILE
 SOURCEDETERMINE
+IPSECMOD_HEADER
+IPSECMOD_OBJ
 DNSCRYPT_OBJ
 DNSCRYPT_SRC
 ENABLE_DNSCRYPT
@@ -755,6 +757,9 @@ UNBOUND_CHROOT_DIR
 UNBOUND_RUN_DIR
 ub_conf_dir
 ub_conf_file
+UNBOUND_LOCALSTATE_DIR
+UNBOUND_SYSCONF_DIR
+UNBOUND_SBIN_DIR
 EGREP
 GREP
 CPP
@@ -867,6 +872,7 @@ with_libfstrm
 enable_dnscrypt
 with_libsodium
 enable_cachedb
+enable_ipsecmod
 with_libunbound_only
 '
       ac_precious_vars='build_alias
@@ -1547,6 +1553,8 @@ Optional Features:
   --enable-dnscrypt       Enable dnscrypt support (requires libsodium)
   --enable-cachedb        enable cachedb module that can use external cache
                           storage
+  --enable-ipsecmod       Enable ipsecmod module that facilitates
+                          opportunistic IPsec
 
 Optional Packages:
   --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]
@@ -4106,6 +4114,11 @@ case "$prefix" in
 		prefix="/usr/local"
         ;;
 esac
+case "$exec_prefix" in
+        NONE)
+		exec_prefix="/usr/local"
+        ;;
+esac
 
 # are we on MinGW?
 if uname -s 2>&1 | grep MINGW32 >/dev/null; then on_mingw="yes"
@@ -4117,6 +4130,12 @@ fi
 #
 # Determine configuration file
 # the eval is to evaluate shell expansion twice
+UNBOUND_SBIN_DIR=`eval echo "${sbindir}"`
+
+UNBOUND_SYSCONF_DIR=`eval echo "${sysconfdir}"`
+
+UNBOUND_LOCALSTATE_DIR=`eval echo "${localstatedir}"`
+
 if test $on_mingw = "no"; then
   ub_conf_file=`eval echo "${sysconfdir}/unbound/unbound.conf"`
 else
@@ -20345,6 +20364,27 @@ $as_echo "#define USE_CACHEDB 1" >>confdefs.h
     no|*)
     	# nothing
     	;;
+esac
+
+# check for ipsecmod if requested
+# Check whether --enable-ipsecmod was given.
+if test "${enable_ipsecmod+set}" = set; then :
+  enableval=$enable_ipsecmod;
+fi
+
+case "$enable_ipsecmod" in
+	yes)
+
+$as_echo "#define USE_IPSECMOD 1" >>confdefs.h
+
+		IPSECMOD_OBJ="ipsecmod.lo ipsecmod-whitelist.lo"
+
+		IPSECMOD_HEADER='$(srcdir)/ipsecmod/ipsecmod.h $(srcdir)/ipsecmod/ipsecmod-whitelist.h'
+
+		;;
+	no|*)
+		# nothing
+		;;
 esac
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking if ${MAKE:-make} supports $< with implicit rule in scope" >&5

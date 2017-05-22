@@ -109,6 +109,11 @@ case "$prefix" in
 		prefix="/usr/local"
         ;;
 esac
+case "$exec_prefix" in
+        NONE)
+		exec_prefix="/usr/local"
+        ;;
+esac
 
 # are we on MinGW?
 if uname -s 2>&1 | grep MINGW32 >/dev/null; then on_mingw="yes"
@@ -120,6 +125,12 @@ fi
 #
 # Determine configuration file
 # the eval is to evaluate shell expansion twice
+UNBOUND_SBIN_DIR=`eval echo "${sbindir}"`
+AC_SUBST(UNBOUND_SBIN_DIR)
+UNBOUND_SYSCONF_DIR=`eval echo "${sysconfdir}"`
+AC_SUBST(UNBOUND_SYSCONF_DIR)
+UNBOUND_LOCALSTATE_DIR=`eval echo "${localstatedir}"`
+AC_SUBST(UNBOUND_LOCALSTATE_DIR)
 if test $on_mingw = "no"; then
   ub_conf_file=`eval echo "${sysconfdir}/unbound/unbound.conf"`
 else
@@ -1351,6 +1362,21 @@ case "$enable_cachedb" in
     no|*)
     	# nothing
     	;;
+esac
+
+# check for ipsecmod if requested
+AC_ARG_ENABLE(ipsecmod, AC_HELP_STRING([--enable-ipsecmod], [Enable ipsecmod module that facilitates opportunistic IPsec]))
+case "$enable_ipsecmod" in
+	yes)
+		AC_DEFINE([USE_IPSECMOD], [1], [Define to 1 to use ipsecmod support.])
+		IPSECMOD_OBJ="ipsecmod.lo ipsecmod-whitelist.lo"
+		AC_SUBST(IPSECMOD_OBJ)
+		IPSECMOD_HEADER='$(srcdir)/ipsecmod/ipsecmod.h $(srcdir)/ipsecmod/ipsecmod-whitelist.h'
+		AC_SUBST(IPSECMOD_HEADER)
+		;;
+	no|*)
+		# nothing
+		;;
 esac
 
 AC_MSG_CHECKING([if ${MAKE:-make} supports $< with implicit rule in scope])

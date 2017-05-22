@@ -681,6 +681,9 @@
 /* Define this to enable GOST support. */
 #undef USE_GOST
 
+/* Define to 1 to use ipsecmod support. */
+#undef USE_IPSECMOD
+
 /* Define if you want to use internal select based events */
 #undef USE_MINI_EVENT
 

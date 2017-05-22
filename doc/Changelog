@@ -1,3 +1,34 @@
+22 May 2017: Wouter
+	- Fix #1268: SIGSEGV after log_reopen.
+
+18 May 2017: Wouter
+	- Fix #1265 to use /bin/kill.
+	- Fix #1267: Libunbound validator/val_secalgo.c uses obsolete APIs,
+	  and compatibility with BoringSSL.
+
+17 May 2017: Wouter
+	- Fix #1265: contrib/unbound.service contains hardcoded path.
+
+17 May 2017: George
+	- Use qstate's region for IPSECKEY rrset (ipsecmod).
+
+16 May 2017: George
+	- Implemented opportunistic IPsec support module (ipsecmod).
+	- Some whitespace fixup.
+
+16 May 2017: Wouter
+	- updated dependencies in the makefile.
+	- document trust-anchor-signaling in example config file.
+	- updated configure, dependencies and flex output.
+	- better module memory lookup, fix of unbound-control shm names for
+	  module memory printout of statistics.
+	- Fix type AVC sldns rrdef.
+
+12 May 2017: Wouter
+	- Adjust servfail by iterator to not store in cache when serve-expired
+	  is enabled, to avoid overwriting useful information there.
+	- Fix queries for nameservers under a stub leaking to the internet.
+
 9 May 2017: Ralph
 	- Add 'c' to getopt() in testbound.
 	- iana portlist update
