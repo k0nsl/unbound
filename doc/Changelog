@@ -1,3 +1,40 @@
+7 June 2017: Wouter
+	- Fix that unbound-control can set val_clean_additional and val_permissive_mode.
+
+6 June 2017: Wouter
+	- Add an explicit type cast for TCP FASTOPEN fix.
+	- renumbering B-Root's IPv6 address to 2001:500:200::b.
+	- Fix #1275: cached data in cachedb is never used.
+	- Fix #1276: [dnscrypt] add XChaCha20-Poly1305 cipher.
+
+1 June 2017: Ralph
+	- Fix #1274: automatically trim chroot path from dnscrypt key/cert paths
+	  (from Manu Bretelle).
+
+1 June 2017: Wouter
+	- Fix fastopen EPIPE fallthrough to perform connect.
+
+31 May 2017: Ralph
+	- Also use global local-zones when there is a matching view that does
+	  not have any local-zone specified.
+
+31 May 2017: Wouter
+	- Fix #1273: cachedb.c doesn't compile with -Wextra.
+	- If MSG_FASTOPEN gives EPIPE fallthrough to try normal tcp write.
+
+30 May 2017: Ralph
+	- Fix #1269: inconsistent use of built-in local zones with views.
+	- Add defaults for new local-zone trees added to views using
+	  unbound-control.
+
+30 May 2017: Wouter
+	- Support for openssl EVP_DigestVerify.
+	- Support for the ED25519 algorithm with openssl (from openssl 1.1.1).
+
+29 May 2017: Wouter
+	- Fix assertion for low buffer size and big edns payload when worker
+	  overrides udpsize.
+
 26 May 2017: Ralph
 	- Added redirect-bogus.patch to contrib directory.
 
